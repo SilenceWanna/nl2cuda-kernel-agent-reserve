@@ -118,8 +118,9 @@ FAIL=0
 [ -f skill/CASE_EVIDENCE.md ] && { echo "  ✗ CASE_EVIDENCE.md 仍在" >&2; FAIL=1; }
 [ -s "cases/$CASE/reference.py" ] && { echo "  ✗ 目标 case reference 非空" >&2; FAIL=1; }
 # 泄露关键词扫描：SKILL.md 正文只留通用原理（不点 case 名 + 不给完整公式/性能），允许保留；
+# 本脚本自身的注释/检测正则含这些关键词（作匹配模式与说明，非某 case 的答案），排除；
 # 其余任何文件含"完整解法公式/精确性能数字"即泄露源残留。
-LEAK="$(git grep -liE 'grad_A=|L⁻ᵀ|Phi\(L|解伴随系统 Aᵀ|反 1\.25|前 0\.31|9\.80' -- . ':!skill/SKILL.md' 2>/dev/null || true)"
+LEAK="$(git grep -liE 'grad_A=|L⁻ᵀ|Phi\(L|解伴随系统 Aᵀ|反 1\.25|前 0\.31|9\.80' -- . ':!skill/SKILL.md' ':!skill/scripts/prepare_cleanroom.sh' 2>/dev/null || true)"
 [ -n "$LEAK" ] && { echo "  ✗ 仍有文件含完整解法/性能泄露: $LEAK" >&2; FAIL=1; }
 NONEMPTY_IMPL="$(find cases -name '*.cu' -not -path '*/delivery/*' -size +0c 2>/dev/null | head -3)"
 [ -n "$NONEMPTY_IMPL" ] && { echo "  ✗ 仍有非空 kernel: $NONEMPTY_IMPL" >&2; FAIL=1; }
