@@ -37,96 +37,92 @@ cd nl2cuda-kernel-agent
 
 ---
 
-## 步骤 1：准备 GPU 环境
+## 步骤 1：准备 GPU 环境（并冒烟验证内置 rbf 样例）
 
-编译运行 CUDA kernel **需要 NVIDIA GPU + nvcc + PyTorch(cuda) + ninja**。二选一：
+编译运行 CUDA kernel **需要 NVIDIA GPU + nvcc + PyTorch(cuda) + ninja**。按你的情况选一条路径。**每条路径都以"跑通内置 rbf 样例"收尾**——rbf 一 PASS，就证明环境就绪，可以进步骤 2。
 
 ### 路径 A（推荐，零成本）：Google Colab 免费 T4
 
 1. 打开 [Colab](https://colab.research.google.com/)，`代码执行程序 → 更改运行时类型 → T4 GPU`。
-2. 上传并打开本仓库的 `notebooks/run.ipynb`（或新建 notebook 手敲下面命令）。
-3. 依次运行它的单元：clone/pull 仓库 → `pip install ninja` → `python scripts/probe_env.py`（确认 GPU/CUDA/torch）→ `python framework/smoke_test.py`（确认 nvcc+ninja 编译链路通）。
+2. 上传并打开本仓库的 `notebooks/run.ipynb`。
+3. **从上到下依次运行它的单元即可**——notebook 已包含：clone/pull 仓库 → `pip install ninja` → `probe_env.py`（确认 GPU/CUDA/torch）→ `smoke_test.py`（确认 nvcc+ninja 编译链路）→ `verify_case.py --case rbf`（正确性全 PASS）→ `bench_case.py --case rbf`（加速比）。
+4. 跑到 rbf 的 `verify` 全 PASS，环境即就绪。**走完 notebook = 环境准备 + 冒烟验证都已完成**，直接进步骤 2。
 
-### 路径 B：自备 GPU 机（本地或云）
+### 路径 B：自备本地 / 云 GPU 机
 
+> **Windows 用户请在 WSL（Ubuntu）里操作**——CUDA 编译链路在 WSL 下最顺（宿主装好 NVIDIA 驱动，WSL 内装 CUDA toolkit + PyTorch(cuda)）。在 PowerShell 里直接跑通常会卡在 nvcc/编译环节。进入 WSL：开始菜单搜 "Ubuntu" 或终端里 `wsl`。
+
+在 GPU 机（Windows 则在 WSL）里：
 ```bash
+git clone https://github.com/SilenceWanna/nl2cuda-kernel-agent.git && cd nl2cuda-kernel-agent
 pip install -r requirements.txt          # torch>=2.4, numpy>=1.26, ninja>=1.11
-# 确认 nvcc 在 PATH：nvcc --version
+nvcc --version                           # 确认 nvcc 在 PATH
 export CUDA_VISIBLE_DEVICES=0             # 指向一张空闲卡
-python scripts/probe_env.py              # 确认 GPU / CUDA / PyTorch 版本
-python framework/smoke_test.py           # 确认编译链路（nvcc + ninja）可用
+python scripts/probe_env.py              # 确认 GPU / CUDA / PyTorch
+python framework/smoke_test.py           # 确认编译链路（nvcc + ninja）
+python skill/scripts/verify_case.py --case rbf   # 冒烟：前反向 5 种子应全 PASS
+python skill/scripts/bench_case.py  --case rbf   # 冒烟：加速比（rbf 参考前~1.10×/反~1.17×）
 ```
+rbf `verify` 全 PASS 即环境就绪，进步骤 2。
+
+### 路径 C：本地无 GPU、SSH 连远程 GPU 机
+
+很常见（本地开发机无卡，用远程/云 GPU；甚至需经跳板机中转两跳）。做法：
+
+1. **配好 SSH**：能从本地直连（或经跳板机）到远程 GPU 机。建议在 `~/.ssh/config` 里配置好 Host 别名与跳板（`ProxyJump`），使 `ssh <别名>` 一步登入。密钥自行管理，**不要提交进仓库**。
+2. **远程机备环境**：在远程机上按路径 B 装好 CUDA toolkit + PyTorch(cuda) + ninja。
+3. **代码同步**：把本仓库同步到远程（任选）——远程 `git clone` 本 public 仓、或本地 `rsync -az ./ <别名>:~/nl2cuda/`、或 `scp`。以后每次改完 `cases/<name>/` 都同步过去再跑。
+4. **在远程跑冒烟**：`ssh <别名> 'cd ~/nl2cuda && python skill/scripts/verify_case.py --case rbf && python skill/scripts/bench_case.py --case rbf'`。
+5. rbf `verify` 全 PASS 即就绪。（步骤 2 起，让 agent 按同样的"同步→远程跑→读结果"方式自测你的新算法。）
 
 > `framework/loader.py` 默认为 sm_75(T4) + sm_80(A100) 编译。其他架构用 `export CUDA_ARCHS="XX"`（如 `90` for H100）。
 
 ---
 
-## 步骤 2：冒烟验证（确认环境 OK，用内置 rbf 样例）
+## 步骤 2：告诉 agent 你的 GPU 环境 + 输入算法描述
 
-先跑通内置样例，确认环境无误再动手做自己的算法：
+交付物已随仓库带了 agent 自动加载的约定文件（`AGENTS.md` / `CLAUDE.md` / `CONVENTIONS.md`）——**多数情况下你不用贴长提示词，直接告诉 agent 两件事即可**：
 
-```bash
-python skill/scripts/verify_case.py --case rbf     # 前反向 5 种子 allclose，应全 PASS
-python skill/scripts/bench_case.py  --case rbf     # 前反向各自 vs torch.compile 的加速比
+```
+我的 GPU 环境是：<Colab / 本地WSL GPU / 远程SSH（把连接方式给它，如 "ssh gpubox" 一步可登）>。
+
+<然后直接用自然语言描述你的算法>
+例如："把每行向量归一化到均值0方差1再乘可学习的 gamma 加 beta，输入是 [批, 特征] 的 fp32 张量，对输入和 gamma/beta 都要能求梯度。"
 ```
 
-`verify_case.py` 打印 `PASS` 即环境就绪。（`bench_case.py` 的加速比因卡而异，rbf 参考值前 ~1.10×/反 ~1.17×。）
+agent 会（按 `SKILL.md` 流程）：
+- 若你的描述是模糊自然语言 / 点了个有多变体的算子名 → **先推导数学规格 + PyTorch reference 呈给你确认**（唯一的人类确认点），确认后才动工；
+- 据你说的环境类型，在对应位置（Colab 单元 / 本地 WSL / 远程 SSH）跑自测；
+- 自建 `cases/<name>/`（reference / config / __init__ / op / kernels），自主推导反向。
+
+> **兜底**：若你的 agent 没自动加载约定文件（或想更明确），把这段贴给它——
+> ```
+> 读 skill/SKILL.md 与 skill/DESIGN.md，严格按其流程和防作弊红线执行；framework/ 只读，cases/rbf/ 是结构范例。
+> 我的 GPU 环境：<...>。我的算法：<自然语言描述 + 若有则给 shape/dtype + 对哪些输入求梯度>。
+> 按 SKILL 步骤 0.5 先推导数学规格呈我确认，再建 cases/<name>/、写前反向 kernel、自测到达标。
+> 红线：fp32、不用 fast-math、不改 framework/、cuBLAS/cuSOLVER 只作积木不得直调等价库成品(如分解直调 potrf)。
+> ```
 
 ---
 
-## 步骤 3：驱动 agent 实现你的算法（宿主无关）
+## 步骤 3：agent 自主自测到达标（你只在数学确认点介入）
 
-把下面这段**上手提示**贴给你的 agent（Claude Code / Codex / aider / Cursor / Cline 等皆可），
-替换 `<...>` 为你的算法描述：
+确认数学规格后，agent 应**自主循环**：写 kernel → 在你的环境跑 `verify_case.py`（正确性）→ 通过后 `bench_case.py`（性能）→ 未达标按 `loop.md` 优化 → 重跑，直到达标或诚实报边界。你通常无需手动跑命令。
 
-```
-你将使用本仓库的 nl2cuda-kernel skill，为我把一个算法实现为自定义 CUDA 前向+反向 kernel，
-以 PyTorch 为金标准验证正确性，并在规范计时下力争超过 torch.compile。
-
-1. 先读 skill/SKILL.md（方法论主体）和 skill/DESIGN.md（架构），严格按其流程和防作弊红线执行。
-   framework/ 对你只读，禁止修改。cases/rbf/ 是完整结构范例，照它的 7 文件骨架来。
-2. 我的算法：<自然语言描述前向计算 + 各输入张量名/形状/dtype + 输出 + 对哪些输入求梯度 + 标量参数>
-   例如："LayerNorm。每行减均值除标准差(含eps)再乘gamma加beta。输入 X[B,D]、gamma[D]、beta[D]，
-   fp32。对 X/gamma/beta 求梯度。"
-3. 若我给的是模糊自然语言（无精确公式/shape）、或点了个有多种变体的算子名，先按 SKILL.md 步骤 0.5
-   推导数学规格 + PyTorch reference 呈给我确认，再动工（这是唯一的人类确认点）。
-4. 在 cases/<name>/ 下写：reference.py（PyTorch 金标准，禁止落回 F.*/SDPA 高层算子）、config.py、
-   __init__.py（暴露 CASE）、kernels/*.cu（前向+反向，反向公式自主推导）、op.py（autograd.Function 封装为 candidate）。
-5. 用只读 CLI 自测（见步骤 4），未达标按 skill/loop.md 迭代，只改 cases/<name>/。
-6. 红线：fp32 全精度、不用 fast-math、不降精度换速度、不改 framework/、cuBLAS/cuSOLVER 只能作
-   辅助原语(GEMM/TRSM 等积木)不得直调与目标算子等价的库成品(如分解直调 potrf)。
-```
-
-agent 会产出 `cases/<你的算法名>/`（reference.py / config.py / __init__.py / op.py / kernels/*.cu）。
-
----
-
-## 步骤 4：自测到达标
-
-> 自测就是在你的 GPU 环境（步骤 1 备好的 Colab / 本地 / 远程）跑下面的只读 CLI。正确性优先——不过就先修正确性，别看性能：
-
+若想自己核验（或 agent 需要你代跑），这几条只读 CLI（在步骤 1 选定的环境里跑）：
 ```bash
-# ① 正确性（必须先过；不过就是数学/kernel 写错，先修这个，别看性能）
-python skill/scripts/verify_case.py --case <你的算法名>
-
-# ② reference 静态预检（防"弱 baseline 假象"——reference 写太慢会让加速比虚高）
-python skill/scripts/check_reference.py --case <你的算法名>     # 期望 REF_CHECK=CLEAN
-
-# ③ 性能（正确性过了再看；前反向各自 ≥1.05× torch.compile 才算达标）
-python skill/scripts/bench_case.py --case <你的算法名>
-
-# ④ 没达标时诊断瓶颈（据结果按 skill/loop.md 选优化手段）
-python skill/scripts/profile_case.py --case <你的算法名>
+python skill/scripts/verify_case.py    --case <你的算法名>   # ① 正确性 allclose，须全 PASS（不过先修正确性、别看性能）
+python skill/scripts/check_reference.py --case <你的算法名>   # ② reference 静态预检，期望 REF_CHECK=CLEAN（防弱 baseline 假象）
+python skill/scripts/bench_case.py     --case <你的算法名>   # ③ 性能，前反向各自 ≥1.05× torch.compile 才达标
+python skill/scripts/profile_case.py   --case <你的算法名>   # ④ 未达标时诊断瓶颈（据结果按 loop.md 选手段）
 ```
 
-- **正确性优先**：`verify_case.py` 不 PASS 时，只修正确性，不看性能。
-- **达标线**：前向、反向各自 ≥1.05× `torch.compile`。擦线（1.05–1.10×）建议连跑 3 次都过再算数。
-- **未达标**：让 agent 读 `skill/loop.md`，据 `profile_case.py` 的瓶颈诊断选手段（tiling / float4 / warp 规约 / 算子融合 / 前向缓存复用等）迭代，每轮只改 `cases/<name>/`、改完重新 verify（必须仍全 PASS）再 bench。
+- **达标线**：前向、反向各自 ≥1.05× `torch.compile`；擦线（1.05–1.10×）建议连跑 3 次都过。
 - **本征边界**：有些算法（纯访存前向、cuSOLVER/cuFFT 级厂商库前向）手写打不过是正常的——`SKILL.md` 的"识别本征边界"章节讲了何时该停、诚实报边界，别空转。
 
 ---
 
-## 步骤 5：产出并整理 `.cu` 交付
+## 步骤 4：产出并整理 `.cu` 交付
 
 达标（或确认边界）后，你的 CUDA kernel 就在：
 
@@ -167,4 +163,4 @@ make test        # 编译 + CPU 对拍，应打印 PASS
 
 ## 一句话流程
 
-**clone 仓库 → 备好 GPU 环境（Colab 或自备）→ 冒烟跑通 rbf → 把上手提示+算法描述贴给 agent → agent 建 `cases/<name>/` → `verify_case.py`/`bench_case.py` 自测到达标 → 从 `kernels/*.cu` 取得 `.cu`（可选整理成 `delivery/` 独立编译版）。**
+**clone 仓库 → 备好 GPU 环境（Colab / 本地 WSL / 远程 SSH，任一路径都以跑通 rbf 收尾）→ 告诉 agent 你的环境类型 + 用自然语言描述算法 → agent 推导数学规格请你确认 → agent 自建 `cases/<name>/` 并自主 verify/bench 自测到达标 → 从 `kernels/*.cu` 取得 `.cu`（可选整理成 `delivery/` 独立编译版）。**

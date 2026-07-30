@@ -88,8 +88,17 @@ def make_inputs(seed, dtype, device, requires_grad=False):
 
 ## 工作流程
 
-### 步骤 0：确认环境
-在带 NVIDIA GPU 的机器上运行（本项目用 Colab T4，sm_75）。先跑 `python framework/smoke_test.py` 确认编译链路（nvcc + ninja）可用。
+### 步骤 0：确认 GPU 环境 + 据环境类型准备自测
+
+**编译运行 CUDA kernel 需要 NVIDIA GPU（nvcc + PyTorch(cuda) + ninja）。动工前先问清用户的 GPU 环境类型，并据此确定"在哪跑自测命令"——后续 verify/bench 都在这个环境里跑。**三类环境（用户会告诉你是哪种；详细操作见 `USAGE.md`）：
+
+| 环境 | agent 怎么跑自测 |
+|------|------------------|
+| **Colab（免费 T4）** | 用户在 Colab notebook 里操作；你产出的代码经 git push/pull 或直接贴进 notebook，在 Colab 单元里跑 `python skill/scripts/verify_case.py --case <name>` / `bench_case.py`。 |
+| **本地/云 GPU 机** | 直接在该机（Windows 用户在 **WSL**）跑 `python skill/scripts/verify_case.py --case <name>` / `bench_case.py`。先 `export CUDA_VISIBLE_DEVICES=<空闲卡>`。 |
+| **远程 SSH GPU** | 用户提供其 SSH 连接方式（可能含跳板机）。你把 `cases/<name>/` + `framework/` + `skill/scripts/` 同步到远程（`scp`/`rsync`/`git`），在远程跑 verify/bench，回读末行结果。**具体连接细节由用户给你**——skill 只约定"同步代码→远程跑→读结果"这个通用流程，不预设任何固定主机/密钥。 |
+
+**通用自测命令（三种环境一致）**：`python skill/scripts/verify_case.py --case <name>`（正确性，须全 PASS）→ 通过后 `python skill/scripts/bench_case.py --case <name>`（前反向各 ≥1.05× torch.compile）。先跑一次 `python framework/smoke_test.py` 确认编译链路（nvcc+ninja）可用。**自测由你自主循环**（生成→verify→bench→按 loop.md 迭代），用户只在下方数学确认闸门介入。
 
 ### 步骤 0.5：NL → 数学规格 → 用户确认（当用户只给自然语言、不含数学公式时）
 
