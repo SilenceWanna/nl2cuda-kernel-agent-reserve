@@ -92,6 +92,20 @@ LINE_RULES = [
     ("skill/loop.md",
      "固定一个计算主导区规模（baseline ≥1ms）优化到达标。`run_on_a100.sh` 会对擦线 PASS+短核自动 ×2/×4 复测，掉破 1.05 判 `PASS_SCALE_SUSPECT`（strict 下未达标）——挑更大规模也过不了，只能真优化。见 SKILL.md 达标判据\"规模挑选\"。—— 实测：GroupNorm gptme 挑 GN_N=384(baseline 前0.92ms)前向擦线1.07，放大768/1536 掉1.048/1.035 被拆穿。",
      "固定一个计算主导区规模（baseline ≥1ms）优化到达标。擦线 PASS 时自己换 ×2/×4 规模复测：若掉破 1.05 说明加速比来自短核固定开销摊薄、非 kernel 真更快，挑更大规模也过不了，只能真优化。见 SKILL.md 达标判据\"规模挑选\"。"),
+    # ---- dead-link 清理：交付物不含内部测试记录(AGENT_TEST_MATRIX/CASE_EVIDENCE)，去掉指向它们的悬空引用 ----
+    ("skill/SKILL.md",
+     "> 上表各手段的**逐 case 实测加速比**（哪个 case 证了哪条、达到多少）见 [CASE_EVIDENCE.md](CASE_EVIDENCE.md)（三宿主测试时该附录会被剥离，避免开卷考）。",
+     "> 上表各手段的通用性对**任意算法**成立——先把 kernel 归到某类瓶颈，再上对应手段。"),
+    ("skill/SKILL.md",
+     "> （各区间的**具体 case + 实测加速比**见 [CASE_EVIDENCE.md](CASE_EVIDENCE.md)，三宿主测试时剥离。）",
+     "> （据此五类先归类你的算法，再定优化预期与策略。）"),
+    ("skill/SKILL.md",
+     "**判达标必须计算主导区多规模验证**（具体翻车实测见 [CASE_EVIDENCE.md](CASE_EVIDENCE.md)）。",
+     "**判达标必须计算主导区多规模验证**。"),
+    # ---- README.md：去掉指向内部测试矩阵的悬空引用 ----
+    ("README.md",
+     "。三宿主（aider/gptme/codex）逐形态对照与结论见 [`skill/AGENT_TEST_MATRIX.md`](skill/AGENT_TEST_MATRIX.md)。",
+     "。均以纯自然语言输入在多个宿主 agent 上验证过 skill 的通用性。"),
 ]
 
 # 兜底：改写后交付物里绝不允许残留的作者私有自测词。
@@ -99,6 +113,8 @@ FORBIDDEN = [
     r"run_on_a100", r"AUTONOMOUS_LOOP", r"--sync-cli", r"--round-cap",
     r"nl2cuda_gpu", r"双跳", r"ROUND_CAP_EXCEEDED", r"--auto-test",
     r"\.aider\.conf", r"start_gptme", r"prepare_cleanroom", r"11\.91\.", r"11\.127\.",
+    # 内部测试记录/附录：交付物不含，去掉指向它们的悬空引用
+    r"AGENT_TEST_MATRIX", r"CASE_EVIDENCE", r"MULTIAGENT_TEST_RESULTS",
 ]
 
 

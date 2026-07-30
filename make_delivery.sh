@@ -5,15 +5,34 @@
 # 真正需要的文件，排除作者专用测试基础设施、内部测试记录、私有笔记、编译缓存。
 #
 # 用法：
-#   bash make_delivery.sh [目标目录]
+#   bash make_delivery.sh [目标目录] [--push] [--repo <git-url>]
 #     目标目录默认 ../nl2cuda-delivery（仓库外，不污染本仓、无文件重复）。
+#     --push        生成+净化+自检全部通过后，在目标目录全新 git init → 单条 commit →
+#                   force-push 到交付仓（--repo 指定，默认下方 DEFAULT_PUSH_REPO）。
+#                   交付仓是"单条干净历史"的分发仓（每次重生都是一条全新 commit，故 force-push），
+#                   与作者的开发/测试仓(reserve)物理隔离——绝不共享 .git 历史，防私有内容经 git log 泄露。
+#     --repo <url>  交付仓地址（仅 --push 时用）。
 #
-# 产物是本仓文件的一份拷贝快照，非 git 仓；查看/打包/分发用。清单见下方 INCLUDE/EXCLUDE。
+# 产物是本仓文件的一份拷贝快照。不带 --push 时是普通目录（查看/打包用）；带 --push 时额外推到交付仓。
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$SCRIPT_DIR"                                   # 本仓库根
-DEST="${1:-$SCRIPT_DIR/../nl2cuda-delivery}"        # 默认生成到仓库外同级目录
+DEFAULT_PUSH_REPO="https://github.com/SilenceWanna/nl2cuda-kernel-agent-skill.git"
+
+# ---- 参数（位置参数=目标目录；--push/--repo 为可选 flag）----
+DEST=""
+DO_PUSH=0
+PUSH_REPO="$DEFAULT_PUSH_REPO"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --push)  DO_PUSH=1; shift ;;
+    --repo)  PUSH_REPO="$2"; shift 2 ;;
+    -*)      echo "未知参数: $1" >&2; exit 2 ;;
+    *)       DEST="$1"; shift ;;
+  esac
+done
+[ -z "$DEST" ] && DEST="$SCRIPT_DIR/../nl2cuda-delivery"
 
 # ---- 必含清单（通用用户从零到 .cu 真正需要的）----
 #  framework/       算法无关评测基座（只读）
@@ -91,4 +110,55 @@ if [ "$FAIL" = 0 ] && [ "$MISS" = 0 ]; then
   ( cd "$DEST" && find . -type f | sort | sed 's/^/    /' ) >&2
 else
   echo "[make_delivery] ✗ 自检未通过（缺失=$MISS 混入=$FAIL），请核查" >&2; exit 1
+fi
+
+# ---- 通用 .gitignore（交付仓用；不含作者 a100/aider 私有条目）----
+cat > "$DEST/.gitignore" <<'GI'
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+# Virtual environments
+venv/
+.venv/
+env/
+.env
+# PyTorch / CUDA build artifacts
+*.so
+*.o
+*.obj
+*.cubin
+*.ptx
+*.fatbin
+torch_extensions/
+# Test / cache / editor / OS
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log
+.vscode/
+.DS_Store
+GI
+
+# ---- --push：全新 init → 单条 commit → force-push 到交付仓（干净单历史，与开发仓物理隔离）----
+if [ "$DO_PUSH" = "1" ]; then
+  echo "[make_delivery] === 推送到交付仓 $PUSH_REPO ===" >&2
+  # 推送前最后一道兜底：全目录扫私有词（净化脚本已扫 .md，这里连非 .md 一起扫，双保险）
+  LEAK="$(grep -rlE 'run_on_a100|AUTONOMOUS_LOOP|nl2cuda_gpu|11\.91\.|11\.127\.|start_gptme|prepare_cleanroom|AGENT_TEST_MATRIX|CASE_EVIDENCE|MULTIAGENT_TEST_RESULTS' "$DEST" 2>/dev/null || true)"
+  if [ -n "$LEAK" ]; then
+    echo "[make_delivery] ✗ 推送前扫描发现私有词残留，中止推送：" >&2
+    echo "$LEAK" | sed 's#^#    #' >&2
+    exit 1
+  fi
+  ( cd "$DEST" || exit 1
+    rm -rf .git                                   # 弃任何旧 .git，保证全新历史（不带开发仓私有 log）
+    git init -q
+    git checkout -q -b main
+    git add -A
+    git -c user.name="nl2cuda-delivery" -c user.email="delivery@localhost" -c commit.gpgsign=false \
+        commit -q -m "nl2cuda-kernel-agent (skill 交付版) — 从开发仓净化生成的通用交付版，使用见 USAGE.md"
+    git remote add origin "$PUSH_REPO"
+    git push -f -u origin main
+  ) || { echo "[make_delivery] ✗ 推送失败" >&2; exit 1; }
+  echo "[make_delivery] ✓ 已 force-push 到交付仓（单条干净历史）" >&2
 fi
