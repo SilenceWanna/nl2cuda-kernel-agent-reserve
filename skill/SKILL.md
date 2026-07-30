@@ -168,35 +168,37 @@ python skill/scripts/bench_case.py --case <name>
 | 线程数 < SM 可驻留量（"一线程一行/一输出"）| occupancy 低 | 降 block 到 256、thread coarsening (E) |
 | 全局访存量 >> 理论下界；同 warp 跨大步长读 | 访存未合并/重复读 | 合并访问、shared tiling、**float4 向量化 + 寄存器缓存**(C/D) |
 | 反向重算了前向已算过的中间量（mean/std、softmax、K…）| 重算 | **前向 `ctx` 缓存复用**(F)——反向决定性一招 |
-| 反向有**多个梯度各用独立 kernel、各自整遍重读同一输入**（如 dX 一个 kernel + dg 一个 kernel 各扫一遍 X/G）| 反向多遍访存 | **多梯度融合到一个 kernel，输入只读一遍**(F)：一 block 管一段行 chunk，读 X/G 一遍同时算 dX 写出 + 用 **shared 私有累积**该 chunk 对跨行梯度（dg 等）的贡献、chunk 末**一次性 atomicAdd**（atomic 次数=行块数≪N，既省重读又避 per-element atomic 竞争）。实测 l2norm_scale 反向 0.84→1.60×。⚠️**别用 per-element global atomicAdd 融合**（N 行抢同地址竞争爆炸，实测 0.85→0.26× 翻车） |
+| 反向有**多个梯度各用独立 kernel、各自整遍重读同一输入**（如 dX 一个 kernel + dg 一个 kernel 各扫一遍 X/G）| 反向多遍访存 | **多梯度融合到一个 kernel，输入只读一遍**(F)：一 block 管一段行 chunk，读输入一遍同时算逐元素梯度写出 + 用 **shared 私有累积**该 chunk 对跨行梯度（如 dgamma）的贡献、chunk 末**一次性 atomicAdd**（atomic 次数=行块数≪N，既省重读又避 per-element atomic 竞争）。⚠️**别用 per-element global atomicAdd 融合**（N 行抢同地址竞争爆炸，翻车） |
 | 规约（sum/mean/max）占大头 | 规约低效 | warp shuffle 规约、两级归约、**列规约二维分块**(C) |
 | 朴素参考物化 [N,M,D] 等大张量 | 带宽/内存 | 融合不物化 (F) |
-| 算法是**累积/扫描依赖**（前缀和、cumsum、cumprod、扫描类）| 串行依赖 | 用成熟**并行扫描原语**（CUB `BlockScan`/`DeviceScan`，或 Hillis-Steele/Blelloch）；反向是**反向扫描**（`dx[j]=Σ_{i≥j} dy[i]`）。实测 scan 用 CUB block scan 前3.4×/反4.1× 大幅达标 |
-| 算法含**矩阵乘**（GEMM、attention 的 Q·Kᵀ/P·V）| 计算密集 | **cuBLAS `cublasSgemm` 做矩阵乘 + 手写融合尾**（bias/gelu/softmax）；赢在融合省中间物化。实测 GEMM+bias+gelu 前1.19/反1.16、attention 前1.3×（cuBLAS batched + 手写 causal softmax）。⚠️cuBLAS 默认 TF32 须 `cublasSetMathMode(CUBLAS_DEFAULT_MATH)` 关掉守 fp32 |
-| **变系数递推**（系数输入依赖，如门控 SSM `h_t=z_t·h_{t-1}+…`，z_t 依赖 x_t）| 串行+无稳定O(N) | reference 用 log 空间 O(T²) 下三角（见步骤2例外）；**candidate 手写 O(T) 递推 kernel** → 对 O(T²) baseline 天然大幅赢（gated_ssm 前7.8/反13.8，是 CUDA 能做稳定 O(T) 而 PyTorch 做不到的真实价值）|
-| **数据依赖写入**（scatter/segment 聚合，多源写同一目标）| atomic 竞争 | atomicAdd + **选低冲突规模**（段数 S 大→每段源少）+ float4 gather 反向。实测 scatter_add S=32768(低冲突) 前2.19；高冲突 S=4096 只 1.02× → 规模/冲突度选择本身是关键决策 |
+| 算法是**累积/扫描依赖**（前缀和、cumsum、cumprod、扫描类）| 串行依赖 | 用成熟**并行扫描原语**（CUB `BlockScan`/`DeviceScan`，或 Hillis-Steele/Blelloch）；反向是**反向扫描**（`dx[j]=Σ_{i≥j} dy[i]`）——常大幅达标 |
+| 算法含**矩阵乘**（GEMM、attention 的 Q·Kᵀ/P·V）| 计算密集 | **cuBLAS `cublasSgemm` 做矩阵乘 + 手写融合尾**（bias/gelu/softmax）；赢在融合省中间物化。⚠️cuBLAS 默认 TF32 须 `cublasSetMathMode(CUBLAS_DEFAULT_MATH)` 关掉守 fp32 |
+| **变系数递推**（系数输入依赖，如门控 SSM `h_t=z_t·h_{t-1}+…`，z_t 依赖 x_t）| 串行+无稳定O(N) | reference 用 log 空间 O(T²) 下三角（见步骤2例外）；**candidate 手写 O(T) 递推 kernel** → 对 O(T²) baseline 天然大幅赢（CUDA 能做稳定 O(T) 而 PyTorch 做不到的真实价值）|
+| **数据依赖写入**（scatter/segment 聚合，多源写同一目标）| atomic 竞争 | atomicAdd + **选低冲突规模**（段数 S 大→每段源少）+ float4 gather 反向。规模/冲突度选择本身是关键决策（高冲突可能只擦线、低冲突真赢）|
 | **数据依赖控制流**（top-k、argmax 选择）| 非规则 | 手写 warp 两阶段选择（非全排序）；reference 可用 `torch.topk` 原语但 **candidate 必须手写**；反向稀疏散回被选位置。⚠️别用 `torch.sort()[:,:k]` 全排序 O(DlogD) 当 baseline（弱 baseline 变种D）|
-| **间接寻址/非规则访存**（CSR SpMV、gather-heavy）| 访存不规则 | 手写融合 CSR kernel（gather+乘加一趟，省 index_select+scatter_add 的中间物化）；或 cuSPARSE（但通用路径 descriptor 固定开销大，反向常输）。实测 spmv 手写前5.97/反2.48 |
+| **间接寻址/非规则访存**（CSR SpMV、gather-heavy）| 访存不规则 | 手写融合 CSR kernel（gather+乘加一趟，省 index_select+scatter_add 的中间物化）；或 cuSPARSE（但通用路径 descriptor 固定开销大，反向常输）|
 
-> **⚙️ 形态分类 + "能否赢 torch.compile" 判据总纲（23 形态实测提炼——动工/优化前先据此预判,别在打不赢的形态空转）**：
+> 上表各手段的**逐 case 实测加速比**（哪个 case 证了哪条、达到多少）见 [CASE_EVIDENCE.md](CASE_EVIDENCE.md)（三宿主测试时该附录会被剥离，避免开卷考）。
+
+> **⚙️ 形态分类 + "能否赢 torch.compile" 判据总纲（动工/优化前先据此预判,别在打不赢的形态空转）**：
 > **核心判据:candidate 能赢 torch.compile,当且仅当它做到以下之一**——① **访存比 baseline 更少**（融合省中间物化/避免多趟）；② **利用了 autograd/torch.compile 不知道的解析数学结构**（伴随系统/Φ 算子/稳定递推,反向常数量级优势）；③ **算术强度够高**让计算而非访存主导（大 reduce/点积/GEMM 融合尾）。三者都不占 → 打不过,认边界。
 > **五类形态（先归类,再定预期与策略）**：
-> 1. **稳赢区**（访存更少 或 解析结构）：距离(rbf)、点积(cosine)、exp规约(softmax_ce)、大分组reduce(GroupNorm)、scan/SSM(scan/linear_ssm/gated_ssm 用 cumsum/O(T)递推)、conv1d、间接寻址(spmv)、数据依赖采样(gridsample)、变长分段(segment_softmax)、逐元素融合链**反向**(geglu)、线性求解**反向**(tridiag/cholesky 反向=解伴随/Φ算子)。→ 放手做,前反向多能真赢。
-> 2. **擦线区**（小 reduce,算术强度勉强）：LayerNorm/RMSNorm(D~1K)/l2norm/welford/temperature_softmax 前向。float4+寄存器缓存或能擦 1.0~1.1,但**多规模易掉**,须 3 连 + 计算主导区验（§29 多个被拆穿是短核虚高）。见好就收,别硬堆。
-> 3. **带宽墙区**（纯访存低算术强度前向）：maxpool 前向(读4写1)、geglu 前向(逐元素)、上述小 reduce 归一化前向。candidate 访存量=baseline、达峰值带宽 → **本征打不过,认边界**（非失败）。**反向常仍可赢**（有 Jacobian/散回/融合结构）。
-> 4. **厂商库墙区**（前向 baseline 就是 NVIDIA 厂商成品:cuSOLVER/cuBLAS 大 GEMM/cuFFT）：cholesky 前向(cuSOLVER potrf)。手写分块极难赢厂商库 → **认边界,手写尽力(可用 GEMM/TRSM 积木)+ 诚实报**。⚠️**禁直调同款库成品算子假装赢**（红线§1,potrf/getrf/cuFFT 直调=抄 baseline）。**反向若有解析结构（Φ算子）仍可能小胜**(cholesky 反 1.25)。
-> 5. **宿主分层区**（融合密集,考验 kernel 实现力,非 skill 边界）：GEMM+bias+gelu、online_softmax、causal_attn。→ codex 类强宿主能赢、中弱宿主可能挂,是**实现力**差异（同 case 有宿主赢有宿主输,区别于三宿主一致卡的本征边界）。
-> **元规律:反向常比前向好赢**——前向多是搬运(带宽墙),反向常含 Jacobian/伴随系统/多超越函数/列规约等**解析结构或计算**,candidate 能省 torch.compile 机械反传的多趟物化（geglu/tridiag/cholesky/segment 反向都印证）。但**别默认"反向总能赢"**——低算术强度整行归一化(LayerNorm/welford)反向也撞带宽墙。
+> 1. **稳赢区**（访存更少 或 解析结构）：距离/点积/exp规约/大分组reduce、scan/SSM(cumsum/O(T)递推)、卷积、间接寻址、数据依赖采样、变长分段、逐元素融合链**反向**、线性求解/分解**反向**(=解伴随系统/Φ算子)。→ 放手做,前反向多能真赢。
+> 2. **擦线区**（小 reduce,算术强度勉强）：整行/单行归一化(D~1K)前向(LayerNorm/RMSNorm/l2norm/welford 类)。float4+寄存器缓存或能擦 1.0~1.1,但**多规模易掉**,须 3 连 + 计算主导区验。见好就收,别硬堆。
+> 3. **带宽墙区**（纯访存低算术强度前向）：2×2 池化(读4写1)、纯逐元素、小 reduce 归一化前向。candidate 访存量=baseline、达峰值带宽 → **本征打不过,认边界**（非失败）。**反向常仍可赢**（有 Jacobian/散回/融合结构）。
+> 4. **厂商库墙区**（前向 baseline 就是 NVIDIA 厂商成品:cuSOLVER 分解/求解、cuBLAS 大 GEMM、cuFFT）。手写极难赢厂商库 → **认边界,手写尽力(可用 GEMM/TRSM 积木)+ 诚实报**。⚠️**禁直调同款库成品算子假装赢**（红线§1,potrf/getrf/cuFFT 直调=抄 baseline）。**反向若有解析结构（伴随/Φ算子）仍可能小胜**。
+> 5. **宿主分层区**（融合密集,考验 kernel 实现力,非 skill 边界）：GEMM+尾融合、online/flash 类 attention。→ 强宿主能赢、中弱宿主可能挂,是**实现力**差异（同 case 有宿主赢有宿主输,区别于三宿主一致卡的本征边界）。
+> **元规律:反向常比前向好赢**——前向多是搬运(带宽墙),反向常含 Jacobian/伴随系统/多超越函数/列规约等**解析结构或计算**,candidate 能省 torch.compile 机械反传的多趟物化。但**别默认"反向总能赢"**——低算术强度整行归一化反向也撞带宽墙。
+> （各区间的**具体 case + 实测加速比**见 [CASE_EVIDENCE.md](CASE_EVIDENCE.md)，三宿主测试时剥离。）
 
-> **识别本征边界——何时该停（23 形态实测的元经验，避免在打不赢的算子上空转轮次）**：
-> - **带宽墙区（纯访存低算术强度算子的前向）**：如 2×2 maxpool 前向（读4写1）、逐元素归一化前向——`torch.compile` 融合已到**显存带宽上限**，candidate 无论怎么写都难超 5%。**判据**：profile 显示 kernel 已达带宽上限、candidate 与 baseline 访存量相同且都接近峰值带宽 → 认清是**算法本征无前向优化空间**（非 skill/agent 失败），别再烧轮次。maxpool 三宿主前向一致过不了（1.03/0.998/1.02）即铁证。**反向常仍可赢**（有 argmax 散回等可优化结构）。
-> - **归一化/reduce 家族前向——由 reduce 规模/算术强度分野（18 形态+§29 系统重估实测）**：
->   - **小 reduce（整行/单行，规约元素 ~1K）→ 低算术强度，多为带宽墙**：LayerNorm/RMSNorm(D=1024)/l2norm_scale/welford/temperature_softmax 前向，每输出规约量小、逐元素为主，`torch.compile` 融合已达显存带宽上限。**多数在计算主导区打不过**（candidate 追平 baseline 即峰值带宽 80%+）——**LayerNorm 实测坐实带宽墙**（前反向放大规模均掉破 1.05，寄存器缓存省第二遍 X 读实测无感 1.012→1.019，§29）。**短核规模的擦线 PASS 是固定开销虚高，非真达标**（须多规模交叉，见"规模挑选"）。
->   - **大 reduce/点积（规约元素 ~万级 或 点积/exp 规约）→ 算术强度够，可真赢**：GroupNorm(组内 C/G×H×W≈1.2万~4万)前向跨规模稳赢 1.28~1.40×；cosine_sim(点积)2.12×、softmax_ce(exp规约)1.35× 计算主导区真达标。**判据**：看单输出规约元素数/算术强度——~1K 逐元素→带宽墙、~万级或点积/exp→可真赢。
->   - **反向不一定更好赢**：GroupNorm/cosine_sim/softmax_ce 反向有 Jacobian/列规约/缓存复用可优化（1.2~1.4×真赢）；但 **LayerNorm/welford/temperature_softmax 反向也短核虚高/带宽墙**（低强度整行，计算主导区打不过）——反向能否赢同样看算术强度，别默认"反向总能赢"。
-> - **区分"本征边界"与"没优化够"**：前者三宿主一致卡同一点、且**放大到计算主导区仍打不过**（如 maxpool 前向、LayerNorm 前反向——带宽墙）；后者是同 case 有宿主赢有宿主输（如 attention/scatter——codex 赢 gptme/aider 挂，属 kernel 实现力有空间）。**判据**：计算主导区多规模复测——candidate 追平 baseline+达峰值带宽 80%+ = 带宽墙本征边界，别再烧轮次。
-
-> **实测教训（LayerNorm 反向，一度误判两次）**：阶段8 曾以为"缓存 mean/rstd+二维分块列规约+float4"三招把 LayerNorm 前1.08/反1.25"稳过 5%"——但 **§29 多规模复测推翻**：那是 LN_B=32768 短核虚高，放大到计算主导区前反向均掉破 1.05，是**带宽墙本征边界**（低算术强度整行归一化 D=1024）。**缓存 mean/rstd 消除 O(B·D²) 重算是真修复（正确性+避免灾难，主仓曾有朴素版卡 1228ms）、二维分块列规约是正确结构**，但**性能达标本身是短核假象**。教训：归一化反向"能优化"（结构上）≠"能赢 torch.compile"（计算主导区）——低算术强度整行归一化前反向都可能撞带宽墙，判达标必须计算主导区多规模验证。
+> **识别本征边界——何时该停（避免在打不赢的算子上空转轮次）**：
+> - **带宽墙区（纯访存低算术强度算子的前向）**：如 2×2 池化前向（读4写1）、逐元素归一化前向——`torch.compile` 融合已到**显存带宽上限**，candidate 无论怎么写都难超 5%。**判据**：profile 显示 kernel 已达带宽上限、candidate 与 baseline 访存量相同且都接近峰值带宽 → 认清是**算法本征无前向优化空间**（非 skill/agent 失败），别再烧轮次。三宿主前向一致过不了即铁证。**反向常仍可赢**（有 argmax 散回等可优化结构）。
+> - **归一化/reduce 家族前向——由 reduce 规模/算术强度分野**：
+>   - **小 reduce（整行/单行，规约元素 ~1K）→ 低算术强度，多为带宽墙**：每输出规约量小、逐元素为主，`torch.compile` 融合已达显存带宽上限，**多数在计算主导区打不过**（candidate 追平 baseline 即峰值带宽 80%+）。**短核规模的擦线 PASS 是固定开销虚高，非真达标**（须多规模交叉，见"规模挑选"）。
+>   - **大 reduce/点积（规约元素 ~万级 或 点积/exp 规约）→ 算术强度够，可真赢**。**判据**：看单输出规约元素数/算术强度——~1K 逐元素→带宽墙、~万级或点积/exp→可真赢。
+>   - **反向不一定更好赢**：大 reduce/点积类反向有 Jacobian/列规约/缓存复用可优化（真赢）；但低强度整行归一化反向也短核虚高/带宽墙——反向能否赢同样看算术强度，别默认"反向总能赢"。
+> - **区分"本征边界"与"没优化够"**：前者三宿主一致卡同一点、且**放大到计算主导区仍打不过**（带宽墙）；后者是同 case 有宿主赢有宿主输（属 kernel 实现力有空间）。**判据**：计算主导区多规模复测——candidate 追平 baseline+达峰值带宽 80%+ = 带宽墙本征边界，别再烧轮次。
+> - **关键告诫："能优化"（结构上）≠"能赢 torch.compile"（计算主导区）**：归一化反向常有"缓存 mean/rstd + 二维分块列规约 + float4"等正确优化结构，能消除 O(B·D²) 重算灾难（正确性必修），但**性能达标可能仍是短核假象**——放大到计算主导区前反向掉破 1.05 即带宽墙本征边界。**判达标必须计算主导区多规模验证**（具体翻车实测见 [CASE_EVIDENCE.md](CASE_EVIDENCE.md)）。
 
 ### A. 反向梯度：不用等用户给公式
 - **autograd 即金标准**：写对 PyTorch 前向后，`verify_case.py` 会用 autograd 自动算出参考梯度。你的 CUDA 反向 kernel 只要**数值上复现它**即可——对拍着调，误差进 atol 就对了。
@@ -243,7 +245,7 @@ python skill/scripts/bench_case.py --case <name>
    （赢 torch.compile 靠融合省中间物化/额外 launch，是正当优势）；scan 用 CUB block scan → 合规；SpMV 用 cuSPARSE 或手写 CSR kernel → 合规
    （注意 cuSPARSE 通用路径有 descriptor/workspace 固定开销，反向常因此打不过 torch.compile 的融合 scatter——手写融合 kernel 通常更优）。
    **通用张量原语**（`torch.topk`/`torch.sort`/`torch.cumsum`/`torch.scatter_add`/`torch.index_select` 等）**在 reference 里允许**（它们是基础操作、非神经网络高层层算子），但 candidate 仍须手写 `.cu` 不得直接调这些 torch 原语糊弄；**神经网络层算子**（`F.*`/`nn.*`：max_pool/layer_norm/conv/sdpa/embedding 等）**reference 也禁**。
-   **⚠️ 库调用的"辅助原语 vs 直调目标算子"细分（Cholesky 实测暴露,aider 钻空子）**：cuBLAS/cuSOLVER/cuSPARSE 允许作**辅助原语**（通用运算积木:GEMM/TRSM/TRMM/AXPY/block-scan 等）——candidate 用它们**拼**出目标算法 + 手写融合/调度,赢在融合省物化,合规（如 GEMM+bias+gelu 用 cublasSgemm 拼 + 手写尾）。但**禁止直调"与 case 目标算子语义等价的库函数"**——即 candidate 若把整个待实现算子直接甩给一个库调用（Cholesky 直调 `cusolverDnSpotrf`、解线性系统直调 `getrf/getrs/gesv`、QR 直调 `geqrf`、SVD 直调 `gesvd`、FFT 直调 cuFFT 等）,那 candidate 就是 baseline 用的同款厂商算法,**失去"手写 kernel 跑赢 torch.compile"的全部意义**（等于抄 baseline、比的是同库调用开销）。**判据**：问"这个库调用是**积木**(还需自己拼算法)还是**成品**(直接就是本题答案)?"——成品级直调禁。实测：Cholesky 前向 aider `dlopen` 直调 `cusolverDnSpotrf`（potrf=Cholesky 分解本身）= 违规规避,虽因集成低效没赢也不算数;codex 用 cuBLAS TRSM/GEMM 拼分块 Cholesky = 合规（TRSM/GEMM 是积木,分块调度自己写）。**厂商库墙形态**（前向 baseline 就是 cuSOLVER/cuFFT 等厂商成品）本就难赢,正解是手写尽力 + 诚实报边界（见"识别本征边界"）,不是直调同款库假装赢。
+   **⚠️ 库调用的"辅助原语 vs 直调目标算子"细分**：cuBLAS/cuSOLVER/cuSPARSE 允许作**辅助原语**（通用运算积木:GEMM/TRSM/TRMM/AXPY/block-scan 等）——candidate 用它们**拼**出目标算法 + 手写融合/调度,赢在融合省物化,合规（如 GEMM+尾融合用 cublasSgemm 拼 + 手写尾）。但**禁止直调"与 case 目标算子语义等价的库函数"**——即 candidate 若把整个待实现算子直接甩给一个库调用（分解直调 `potrf`、解线性系统直调 `getrf/getrs/gesv`、QR 直调 `geqrf`、SVD 直调 `gesvd`、FFT 直调 cuFFT 等）,那 candidate 就是 baseline 用的同款厂商算法,**失去"手写 kernel 跑赢 torch.compile"的全部意义**（等于抄 baseline、比的是同库调用开销）。**判据**：问"这个库调用是**积木**(还需自己拼算法)还是**成品**(直接就是本题答案)?"——成品级直调禁,`dlopen` 动态加载绕开检测同样禁。**厂商库墙形态**（前向 baseline 就是厂商成品）本就难赢,正解是手写尽力 + 诚实报边界（见"识别本征边界"）,不是直调同款库假装赢。
 2. 禁止修改/绕过 `framework/` 下的验证器、计时器、协议（评测基座只读）。
 3. 禁止降精度换速度（除非算法描述本身指定低精度）。
 4. 交付 `.cu` 须能独立编译、无 torch 高层运行时依赖。

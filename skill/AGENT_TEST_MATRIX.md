@@ -8,31 +8,29 @@ CUDA 前反向 kernel，验证 skill 的宿主无关性与"知识内置"（agent
 
 ## 1. 通用准备：干净房间
 
-每个 (agent × case) 测试都在"干净房间"里做——只有精简 description，无任何实现，避免 agent 抄现成：
+每个 (agent × case) 测试都在"干净房间"里做——只有精简 description + 通用方法论，无任何 case 的实现/解法，避免 agent 抄现成或 grep 到答案：
 
 ```bash
-# 新 clone 一份，删掉所有 case 实现只留 description.md，并预建空文件（解某些 agent 的写盘卡顿）
-git clone https://github.com/SilenceWanna/nl2cuda-kernel-agent.git <workdir>
-cd <workdir>
-for c in rbf layernorm softmax_ce; do
-  rm -f cases/$c/reference.py cases/$c/config.py cases/$c/__init__.py cases/$c/op.py cases/$c/kernels/*.cu
-  for f in reference.py config.py __init__.py op.py; do : > cases/$c/$f; done
-done
-rm -rf cases/rbf/delivery
-# 各 case 的空 kernel 文件按其命名预建，如：
-: > cases/rbf/kernels/rbf_forward.cu; : > cases/rbf/kernels/rbf_backward.cu
-: > cases/layernorm/kernels/layernorm_forward.cu; : > cases/layernorm/kernels/layernorm_backward.cu
-: > cases/softmax_ce/kernels/softmax_ce_forward.cu; : > cases/softmax_ce/kernels/softmax_ce_backward.cu
+# 一键准备真·干净房间（推荐，堵全部答案泄露源）：
+bash skill/scripts/prepare_cleanroom.sh --case <name> --dir <workdir> [--desc <精简description文件>]
+# 它会 clone → 删 AGENT_TEST_MATRIX.md + CASE_EVIDENCE.md（逐 case 解法/性能）→ 清空所有 case 实现
+# → 删所有 delivery/ → README 中性化 → 建 cleanroom 分支并 commit 空状态 → 自检泄露源已清。
 ```
 
-每个 agent 用**独立 workdir**（避免并行抢目录），产物推到独立分支 `test/kt-<case>-<agent>`。
+> **⚠️ 为什么必须用脚本、不能只删目标 case 的实现（2026-07-30 gptme cholesky 血泪）**：
+> 仓库里 **skill/AGENT_TEST_MATRIX.md（本文件）逐 case 记录了每个宿主的解法/公式/性能数字**、
+> **skill/CASE_EVIDENCE.md 是 SKILL 的逐 case 实测例证附录**、**README.md 的形态光谱表含解法要点**、
+> **其他 case 的实现可被抄结构**、**delivery/ 是完整交付代码**。仅删目标 case 实现 = **假干净房间**——
+> gptme 实测主动 `grep cholesky` 命中矩阵里的完整 Φ 算子公式 + codex 解法 + 0.31/1.25 性能 = **开卷考**，
+> 测出的是抄袭而非真实能力，该轮作废。`prepare_cleanroom.sh` 剥离**全部**这些泄露源，只留通用方法论
+> （SKILL 正文——已做结构分离，逐 case 例证移入 CASE_EVIDENCE.md 附录，正文不点 case 名的完整解法/性能）。
 
-> **⚠️ 干净房间必须 commit 空实现（血泪教训）**：仅在工作区删实现文件、不 commit，是**假干净房间**——
-> 因为 main/HEAD 里三个 case 一直带着达标实现，agent 跑 git 操作（或 clone 自 main）会还原出实现，
-> 于是它"抄现成"而非重生（表现：产物与旧版 `git diff` 为 0，verify/bench 全过但无意义）。
-> **正解**：在 workdir 建 cleanroom 分支，`git rm` 实现文件后**提交这个空状态**（`git commit`），
-> 使 HEAD 里 reference/op/kernel 全为 0 字节。这样 agent 无论怎么操作都还原不出实现，只能靠精简 description+skill 自写。
+> **⚠️ 干净房间必须 commit 空实现（另一血泪教训）**：仅在工作区删实现文件、不 commit，是**假干净房间**——
+> 因为 main/HEAD 里带着达标实现，agent 跑 git 操作（或 clone 自 main）会还原出实现，于是它"抄现成"而非重生
+> （表现：产物与旧版 `git diff` 为 0）。`prepare_cleanroom.sh` 已自动 `git commit` 空状态（HEAD 里实现全 0 字节）。
 > 验真伪：agent 产物与旧版 `git diff origin/main -- <kernel>.cu` 应有大量差异（0=又抄了）。
+
+每个 agent 用**独立 workdir**（避免并行抢目录），产物推到独立分支 `test/kt-<case>-<agent>`。
 
 ## 2. 各 Agent 启动方式（均连京东内网 OpenAI 兼容代理 DongCC `127.0.0.1:8787`）
 
@@ -931,3 +929,18 @@ skill/harness 能保证的（诚实信号）与 agent 能力决定的（优化�
 2. **双大维度判据**：layernorm 灾难本质是"外层沿大数据维度串行 + 内层沿另一大数据维度重算规约"。故**外层与内层循环边界都须是大数据维度名**（`N/M/B/D/H/W/T/C/rows/cols/size/seq/len/...`）才报；编译期小常量/tile/秩（kTopK/RN/RM/dlim/block_size）任一侧命中即排除。rbf（内层 dlim≤TD tile）、topk（k 路小常量）自然不命中。
 
 **双向校准（同 §528 方法）**：① 消误报——全 24 case 重扫全部 CLEAN，4 误报归零；② 仍抓真灾难——造 layernorm 式 O(B·D²) 朴素 kernel（外层 `for b<B` + 内层 `for d<D` 重算 mean）仍被抓（kernel-nested 命中）。**检测器信噪比恢复正常**：只对真"逐样本×整维重算"报警，不再对寄存器 tiling/小 K 展开/算法固有串行误报。**这再次印证 §528 结论——check_reference 可增量校准，发现误报就收紧判据（同发现漏报就补规则），保持零误报回归。**
+
+
+## 36. 干净房间答案泄露漏洞修复 + SKILL 结构分离（补 gptme/aider cholesky 性能对照时暴露并根治）
+
+补 §34 遗留的 cholesky 三宿主性能缺口时，暴露一个**贯穿所有历史三宿主测试的干净房间漏洞**，并根治。
+
+**① aider cholesky（Windows 本地，小 N=512）**：守确认闸门 ✓（精简 description 未点透变体时列规格）、守红线 ✓（主动声明"CUDA candidate 不直调 cuSOLVER potrf，手写 Cholesky 前向 + 解析梯度反向"）、**前向 5 seed 全 PASS**（手写分块 Cholesky，max_err ~4e-7）、**反向始终 FAIL**（4 轮迭代未修对）。aider 自己精准诊断出根因："把 `Φ(Lᵀ@grad_L)` 严格下三角镜像到上三角（对称全量梯度形式），但 reference 是下三角存储语义，镜像 off-diagonal 把非对角贡献重复计入 → **反向误差接近 2 倍**"，但连续几轮 fix 没彻底改对。**结论：aider 在 cholesky 反向 Φ 算子（矩阵微分难题）能力不足，未达标——能力边界，非环境问题。**（`--message` 单轮模式局限：跑完一轮对话即退，非真跑满 12 轮 auto-test loop；需 `--file` 预加文件才落盘。）
+
+**② gptme cholesky（WSL，小 N）——暴露干净房间答案泄露漏洞（本轮核心发现）**：gptme 启动后**主动 `grep` 仓库**，命中 **skill/AGENT_TEST_MATRIX.md（本文件）里 cholesky 的完整答案**：codex 解法、精确公式 `grad_A=sym(L⁻ᵀΦ(LᵀG)L⁻¹)`、性能 0.31/1.25，甚至 §34 的"覆盖缺口"记录本身。**这是开卷考**——干净房间只删了目标 case 的实现，却保留了矩阵/README/其他 case 实现/delivery，全是答案泄露源。gptme 接下来的实现会是"抄矩阵里 codex 的解法"，**测出的不是真实能力，数字无意义**。立即停止、本轮作废。（aider 那轮基本可信：它没 grep 矩阵、靠 repo-map 直接建，且反向没做对——若抄到答案反向早该对了。）
+
+**③ 根治——两层修复**：
+- **`skill/scripts/prepare_cleanroom.sh`（新增）**：一键产真·干净房间。剥离**全部**泄露源：删 AGENT_TEST_MATRIX.md + CASE_EVIDENCE.md、清空**所有** case 实现（非仅目标）、删所有 delivery/、README 中性化、可选精简 description 覆盖，然后 `git commit` 空状态 + 自检泄露源已清。替代 §1 旧的"手删 3 个 case"做法。
+- **SKILL.md 结构分离**：SKILL 正文原用具体 case 作例证（点名 cholesky/tridiag + 完整公式 + 性能数字），对**正在做该 case 的 agent** 是泄露。把逐 case 实测例证/性能数字剥离到 **`skill/CASE_EVIDENCE.md`（新增附录）**，SKILL 正文只留**不点 case 名的通用原理**（如"线性求解/分解反向=解伴随/Φ算子"这种方向，不给完整公式/性能）。cleanroom 删附录即可，正文天然无泄露。**验证**：模拟 agent grep cholesky 答案（Φ/grad_A/L⁻ᵀ/0.31/1.25）在干净房间全部无命中，SKILL 方法论保留。
+
+**核心经验（已内化 memory）**：**干净房间的"干净"不只是删目标 case 的实现，而是删掉一切能反推出解法的证据**——测试记录（矩阵）、方法论里的逐 case 例证（含公式/性能）、近邻 case 的可抄结构、完整交付代码。**衡量标准：以目标 case 为关键词 grep 整个 workdir，不应命中任何解法公式/性能数字/可抄实现。** 强宿主（会主动 grep 探索）尤其会触发此漏洞。此漏洞理论上污染了所有"clone 完整仓库"的历史三宿主测试（之前没暴露只因多数 agent 没主动 grep 矩阵）——但历史结论多数仍可信（弱 baseline/短核等结论有独立复验兜底），本次修复保证**后续**测试纯净。
