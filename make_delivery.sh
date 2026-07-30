@@ -22,7 +22,7 @@ DEST="${1:-$SCRIPT_DIR/../nl2cuda-delivery}"        # 默认生成到仓库外�
 #  cases/rbf/       唯一保留的完整样例 case（agent 复制它作模板；含 delivery 独立编译成品样例）
 #  约定文件/依赖/入口/说明书
 INCLUDE_FILES=(
-  "skill/SKILL.md" "skill/DESIGN.md" "skill/loop.md" "skill/AUTONOMOUS_LOOP.md"
+  "skill/SKILL.md" "skill/DESIGN.md" "skill/loop.md"
   "skill/USING_WITH_OTHER_AGENTS.md"
   "skill/scripts/verify_case.py" "skill/scripts/bench_case.py"
   "skill/scripts/profile_case.py" "skill/scripts/check_reference.py"
@@ -59,12 +59,20 @@ rm -rf "$DEST"; mkdir -p "$DEST"
 MISS=0
 for p in "${INCLUDE_DIRS[@]}" "${INCLUDE_FILES[@]}"; do copy_one "$p" || MISS=1; done
 
+# ---- 净化：把交付副本里方法论/约定文件的作者私有自测内容(run_on_a100/双跳SSH等)洗成通用 verify/bench ----
+#      主仓正文保持原样(=作者开发/测试仓)，只改目标目录副本。规则失效(drift)或有残留会 exit 1。
+if ! PYTHONIOENCODING=utf-8 PYTHONUTF8=1 python "$SRC/skill/scripts/_sanitize_for_delivery.py" "$DEST"; then
+  echo "[make_delivery] ✗ 净化失败(见上),交付物未通过一般性检查" >&2; exit 1
+fi
+
 # ---- 自检：确认排除项没混入 ----
 echo "[make_delivery] === 自检 ===" >&2
 FAIL=0
 for bad in \
   "skill/scripts/run_on_a100.sh" "skill/scripts/autotest.sh" \
   "skill/scripts/start_gptme.sh" "skill/scripts/prepare_cleanroom.sh" \
+  "skill/scripts/_sanitize_for_delivery.py" \
+  "skill/AUTONOMOUS_LOOP.md" \
   "skill/AGENT_TEST_MATRIX.md" "skill/CASE_EVIDENCE.md" "skill/MULTIAGENT_TEST_RESULTS.md" \
   "工作计划.md" "工作目标.md"; do
   [ -e "$DEST/$bad" ] && { echo "  ✗ 排除项混入: $bad" >&2; FAIL=1; }

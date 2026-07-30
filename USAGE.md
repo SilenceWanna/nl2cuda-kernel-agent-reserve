@@ -24,7 +24,7 @@ cd nl2cuda-kernel-agent
 |------|------|-----------|
 | `framework/` | 算法无关的评测基座（正确性验证 + 计时 + CUDA 编译加载） | **只读，勿改** |
 | `skill/SKILL.md` | 方法论主体（agent 读它执行全流程） | 只读 |
-| `skill/DESIGN.md` / `loop.md` / `AUTONOMOUS_LOOP.md` | 架构 / 优化循环 / 自测决策 | 只读 |
+| `skill/DESIGN.md` / `loop.md` | 架构 / 优化迭代循环 | 只读 |
 | `skill/scripts/verify_case.py` | 正确性验证 CLI | 只读 |
 | `skill/scripts/bench_case.py` | 计时 CLI（vs torch.compile） | 只读 |
 | `skill/scripts/profile_case.py` | 瓶颈诊断 CLI（优化时用） | 只读 |
@@ -103,9 +103,7 @@ agent 会产出 `cases/<你的算法名>/`（reference.py / config.py / __init__
 
 ## 步骤 4：自测到达标
 
-> **⚠️ 重要（交付物一般性说明）**：`SKILL.md` / 约定文件里提到的 `run_on_a100.sh` 是**本项目作者
-> 专用的"远程 A100 自测"封装**（内含作者私有的 SSH 连接），**不包含在通用交付物里、你也用不上**。
-> 通用环境下，你**直接在自己的 GPU 上跑下面两个 CLI 自测**即可，效果等价：
+> 自测就是在你的 GPU 环境（步骤 1 备好的 Colab / 本地 / 远程）跑下面的只读 CLI。正确性优先——不过就先修正确性，别看性能：
 
 ```bash
 # ① 正确性（必须先过；不过就是数学/kernel 写错，先修这个，别看性能）

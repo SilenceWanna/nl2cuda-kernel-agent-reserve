@@ -7,6 +7,15 @@
 
 **最终目标校准**：本项目的终态是——用户**只输入自然语言算法描述**，agent 依 skill 预设方法**自动选定并连接 GPU、建 case、写前反向 kernel、自测到达标、产出 `.cu`**，全程无需用户懂内部实现、无需贴长提示词、无需手动配 GPU 自测。下列问题多数是"离这个终态还差什么"。
 
+## 架构决策（2026-07-30，处理 #5 时定）
+
+**双仓分离**：
+- **当前 git 仓（本仓）= 作者的开发/测试仓**——保留全部自测基础设施（`run_on_a100.sh`/`autotest.sh`/`AUTONOMOUS_LOOP.md`/京东双跳 SSH/内部测试记录等），正文不动，作者继续用它自主调试与改进 skill。
+- **`../nl2cuda-delivery/`（同级目录）= 最终交付版**——由 `make_delivery.sh` 从本仓生成：只含通用用户需要的文件，并经 `skill/scripts/_sanitize_for_delivery.py` 把方法论/约定文件里的作者私有自测内容**洗成通用 `verify_case`/`bench_case` 表述**。这才是发给用户、保证一般性的版本。
+- **后续端到端测试用交付物目录**；若涉及 skill 本身的改动，同步回本仓（源），并在本文件记录。**改了本仓方法论正文后，务必重跑 `make_delivery.sh` 重新生成+净化交付物**（净化脚本带 drift 检测，正文改动导致锚点失效会 exit 1 提示更新规则）。
+
+---
+
 ---
 
 ## 记录轮次
@@ -52,7 +61,11 @@
 - **期望**：**交付物里任何文件都不应出现 `run_on_a100.sh`/`autotest.sh`/`start_gptme.sh`/`prepare_cleanroom.sh`/`--sync-cli`/`--round-cap`/京东双跳 SSH 等作者自测专用内容**。通用用户的自测是 `verify_case.py`/`bench_case.py`（+ 可选 `profile_case.py`/`check_reference.py`）。需把方法论/约定文件**净化**成宿主无关、环境无关的通用表述（自测=在你的 GPU 上跑 verify/bench，不预设"远程 A100 + 作者脚本"）。
 - **影响**：**这是交付物一般性的核心短板**——通用用户拿到会被引导去跑一个不存在的私有脚本；AUTONOMOUS_LOOP.md 尤其严重（等于把作者的测试基建当成了方法论）。
 - **范围**：`skill/AUTONOMOUS_LOOP.md`（重灾区，可能需大改或从交付物移除/重写）、`AGENTS.md`/`CLAUDE.md`/`CONVENTIONS.md`/`skill/SKILL.md`/`skill/loop.md`/`USAGE.md`。
-- **状态**：🔴 待解决。**注意**：这些内容当前存在于**主仓**，净化时要区分"主仓保留作者自测（作者要用）"vs"交付物净化"——可能的做法：交付物版的这些文件用净化版（`make_delivery.sh` 里替换/清洗），主仓正文也尽量把作者专用部分收敛到单独文件（如只在 `run_on_a100.sh` 注释里，不写进方法论正文）。具体方案待定。
+- **状态**：✅ **已解决（2026-07-30，方案：双仓分离 + 交付物净化，见上方架构决策）**。
+  - `make_delivery.sh` **从交付物排除** `AUTONOMOUS_LOOP.md`（它 100% 是作者远程自测玩法，非通用方法论；其方法论部分 VERDICT 决策/loop 纪律已在 `loop.md`）。
+  - 新增 `skill/scripts/_sanitize_for_delivery.py`（本仓构建工具，**不进交付物**）：make_delivery 复制文件后调用它，把交付副本里 SKILL/loop/AGENTS/CLAUDE/CONVENTIONS/README 的作者私有自测引用（run_on_a100/双跳 SSH/--sync-cli/--round-cap/nl2cuda_gpu 等）就地洗成通用 `verify_case`/`bench_case` 表述。带 **drift 检测**（锚点失效即 exit 1）+ **兜底全目录禁用词扫描**（有残留即 exit 1）。
+  - 独立复验：交付物全目录 grep 12 个作者私有自测词**零命中**；净化后文本通顺（自测步=在你的 GPU 上跑 verify/bench）。
+  - 主仓正文**未改**（=作者测试仓，保留 run_on_a100 等）。USAGE.md 源修正：不再提 run_on_a100、文件清单去掉 AUTONOMOUS_LOOP.md。
 
 ### #6　步骤 4 自测应由 agent 自主完成（含自动连 GPU）🔴
 - **现象**：`USAGE.md` 把自测写成用户手动跑 CLI。但理想流程是——用户在贴算法描述**之前**先告诉 agent「我用 Colab / 本地 GPU / 远程 SSH」，agent 据 skill 里**预设好的方法**自动连接 GPU、建 case、写 kernel、跑自测、迭代到达标，用户不用手动跑命令。
