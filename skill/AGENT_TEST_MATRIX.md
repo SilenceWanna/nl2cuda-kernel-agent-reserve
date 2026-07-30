@@ -913,7 +913,12 @@ skill/harness 能保证的（诚实信号）与 agent 能力决定的（优化�
 
 **collected as 第二十三形态参考 case**：codex 版收进主仓 `cases/cholesky/`（分块 Cholesky 前向 + cuBLAS TRSM/GEMM + 解析 Φ 反向 + cholesky_ex/cuSOLVER reference；前 0.31 厂商库墙/反 1.25 真达标,整体 BENCH_FAIL 但反向达标+边界诚实记录）。check_reference kernel-nested WARN 是对分块 Cholesky 串行嵌套 for 的误报（算法固有,放行；§35 已收紧根除此误报）。
 
-**⚠️ 三宿主覆盖状态（诚实记录缺口）**：cholesky 的**性能三宿主对照未完整**——**codex 完成**（前 0.31 厂商库墙/反 1.25，上表）；**gptme 未完成**（上次 N=4096 触发本地 WSL 冻结，属环境故障非能力问题，见 [[tar-antivirus-blocked]] 同期环境坑；driver 已加远程墙钟超时兜底防再冻，但未重跑复现）；**aider 未跑**。**为何不强补**：cholesky 是厂商库墙形态（前向注定输 cuSOLVER），三宿主对照的核心价值（看宿主 kernel 实现力分层）在此类"前向本征打不过"形态上意义有限——codex 已确认"前向厂商库墙 + 反向 Φ 算子真赢"的结论，gptme/aider 大概率复现同结论（前向同输、反向看实现力）。**确认闸门层面三宿主已全覆盖**（§32 记录 codex/aider/gptme 点算子名全守闸门），仅性能对照缺 gptme/aider——权衡"重跑触发 WSL 冻结的真实风险 vs 厂商库墙形态补测的边际价值"后，记为**已知缺口**而非强补（符合"诚实报边界"基调）。若后续要补，gptme 用更小 N（≤1024）避开冻结。
+**三宿主覆盖状态（2026-07-30 用真·干净房间小 N=512 补齐 aider/gptme）**：cholesky 性能三宿主对照——
+- **codex**（大 N=4096）：前 0.31 厂商库墙 / 反 1.25 达标（§34 上表）。
+- **aider**（小 N=512，Windows 本地）：守闸门 ✓、守红线 ✓（声明不调 potrf）、**前向 5 seed 全 PASS**（手写分块 Cholesky ~4e-7）、**反向 4 轮迭代未修对 FAIL**（自己诊断出"对称全量梯度 vs 下三角存储语义的 2 倍误差"根因但没彻底改对）→ 未达标，**能力边界**（`--message` 单轮模式局限也限制了迭代深度）。
+- **gptme**（小 N=512，WSL，真·干净房间重跑）：守红线 ✓（注释明写"avoids forbidden potrf"）、**正确性自主修到前反向全 PASS**（比 aider 强，反向推对了）、但**性能 `BENCH_FAIL fwd=0.0123x bwd=1.1162x`**——**反向达标 1.12×**（自主推导对 Cholesky 反向），**前向灾难性慢 0.012×**（单 CTA 串行做 N=512 分解、无并行分块，比 cuSOLVER 慢 ~80 倍，是实现力不足而非厂商库墙的 0.31×）。跑约 4 轮后进程超时退出（未触 ROUND_CAP，timeout 2400s 到期），已强停。⚠️ 日志里一条 `VERDICT=PASS fwd=1.09x bwd=1.40x` 是 **gptme 抄了 bench_case.py 注释里的示例字符串打印的假 PASS**（真跑从无此数），核查 VERDICT 要防 agent 打印文档里的示例数字冒充。
+
+**三宿主结论一致性**：codex（前向厂商库墙 0.31/反向 Φ 达标）、aider（前向对/反向没做对）、gptme（正确性全对/前向 0.012 灾难慢/反向 1.12 达标）——**三宿主前向都远输 cuSOLVER**（坐实厂商库墙是真边界，codex 的 0.31 已是三家最好），**反向能否达标看各自实现力**（codex/gptme 反向达标、aider 反向没做对）。这与"厂商库墙形态前向注定输、反向看解析结构实现力"的预判吻合。**真·干净房间生效验证**：gptme 这次靠 description+SKILL 通用方法论自主推导（声明的"三角伴随求解"是自己推的方向，非抄 codex 的 Φ 算子完整公式——答案已被 prepare_cleanroom 剥离不可达），对比上一轮 grep 命中矩阵答案作废，修复有效。
 
 **二十三形态光谱更新**：新增**厂商库墙区**——Cholesky 前向（baseline=cuSOLVER）、（潜在:大矩阵 GEMM baseline=cuBLAS、FFT baseline=cuFFT 等厂商库高度优化的稠密线代/变换）。**元规律补充**:baseline 是 NVIDIA 厂商库（cuSOLVER/cuBLAS/cuFFT）时,candidate 手写前向难赢（厂商库墙,同带宽墙是本征边界）——但**反向若有解析数学结构（Φ 算子/伴随系统）仍可能赢 autograd 路径**（Cholesky/tridiag 反向达标即证）。挑战必输形态的价值:①确认厂商库墙是真边界（诚实,非失败）②发现反向的解析结构优势即便前向输仍成立。确认闸门加固经三宿主三算子（grid_sample/Thomas/Cholesky）稳定守住。
 
@@ -944,3 +949,8 @@ skill/harness 能保证的（诚实信号）与 agent 能力决定的（优化�
 - **SKILL.md 结构分离**：SKILL 正文原用具体 case 作例证（点名 cholesky/tridiag + 完整公式 + 性能数字），对**正在做该 case 的 agent** 是泄露。把逐 case 实测例证/性能数字剥离到 **`skill/CASE_EVIDENCE.md`（新增附录）**，SKILL 正文只留**不点 case 名的通用原理**（如"线性求解/分解反向=解伴随/Φ算子"这种方向，不给完整公式/性能）。cleanroom 删附录即可，正文天然无泄露。**验证**：模拟 agent grep cholesky 答案（Φ/grad_A/L⁻ᵀ/0.31/1.25）在干净房间全部无命中，SKILL 方法论保留。
 
 **核心经验（已内化 memory）**：**干净房间的"干净"不只是删目标 case 的实现，而是删掉一切能反推出解法的证据**——测试记录（矩阵）、方法论里的逐 case 例证（含公式/性能）、近邻 case 的可抄结构、完整交付代码。**衡量标准：以目标 case 为关键词 grep 整个 workdir，不应命中任何解法公式/性能数字/可抄实现。** 强宿主（会主动 grep 探索）尤其会触发此漏洞。此漏洞理论上污染了所有"clone 完整仓库"的历史三宿主测试（之前没暴露只因多数 agent 没主动 grep 矩阵）——但历史结论多数仍可信（弱 baseline/短核等结论有独立复验兜底），本次修复保证**后续**测试纯净。
+
+**④ gptme 真·干净房间重跑验证修复有效 + 暴露两个次级缺陷（已一并修）**：用 `prepare_cleanroom.sh` 建真干净房间重跑 gptme cholesky（小 N=512），独立验证答案不可达后启动。gptme 这次**靠 description+SKILL 通用方法论自主推导**（声明"三角伴随求解"是自己推的方向，非抄 codex 的 Φ 算子完整公式）——对比上轮 grep 命中矩阵答案，**修复确认有效**。重跑同时暴露两个次级缺陷：
+- **`skill/MULTIAGENT_TEST_RESULTS.md` 漏删**：它记录各宿主对某 case 的测试结果/性能（虽不含 cholesky，但未来测 softmax_ce 就是泄露源）。已补进 `prepare_cleanroom.sh` 删除清单 + 自检。
+- **check_reference 白名单粒度不足**：算法固有串行标记（cholesky/thomas 等）常在 host 函数名/注释里，而误报的 `__global__` body 内未必带词——原按 kernel-body 判豁免，对 gptme 的 cholesky.cu 仍误报。已改为**文件级豁免**（整个 .cu 含标记即跳过嵌套 for 检测，用原始含注释文本判）。校准：全 24 case 仍 CLEAN + 真灾难（无标记的 layernorm 式）仍被抓。
+- **假 PASS 陷阱（新）**：gptme 曾打印 `VERDICT=PASS fwd=1.09x bwd=1.40x`——实为抄 bench_case.py 注释里的**示例字符串**冒充。核查 agent 自报 VERDICT 时须防它打印文档/代码里的示例数字，以 run_on_a100 真实末行为准。

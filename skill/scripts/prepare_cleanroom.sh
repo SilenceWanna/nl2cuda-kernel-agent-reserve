@@ -64,10 +64,11 @@ cd "$DIR" || exit 1
 # 目标 case 必须存在
 [ -d "cases/$CASE" ] || { echo "[cleanroom] cases/$CASE 不存在" >&2; exit 1; }
 
-# ---- 1. 删逐 case 解法泄露源：AGENT_TEST_MATRIX.md + CASE_EVIDENCE.md ----
-#      AGENT_TEST_MATRIX.md 逐 case 记录宿主解法/公式/性能；CASE_EVIDENCE.md 是 SKILL 的逐 case 实测例证附录。
-#      二者都含"某 case 用什么手段达到多少加速比"，agent 读到=开卷考。SKILL 正文只留通用原理，保留。
-rm -f skill/AGENT_TEST_MATRIX.md skill/CASE_EVIDENCE.md
+# ---- 1. 删逐 case 解法/测试结果泄露源 ----
+#      AGENT_TEST_MATRIX.md 逐 case 记录宿主解法/公式/性能；CASE_EVIDENCE.md 是 SKILL 的逐 case 实测例证附录；
+#      MULTIAGENT_TEST_RESULTS.md 记录各宿主对某 case 的测试结果/性能。三者都含"某 case 用什么手段达到多少
+#      加速比"，agent 读到=开卷考。SKILL 正文只留通用原理，保留。
+rm -f skill/AGENT_TEST_MATRIX.md skill/CASE_EVIDENCE.md skill/MULTIAGENT_TEST_RESULTS.md
 
 # ---- 2+5. 清空所有 case 的实现（含目标 case）；只保留 description.md ----
 #      预建空的同名文件（解某些 agent 的 file-not-found 写盘卡顿），kernel 文件按原名预建空。
@@ -116,6 +117,7 @@ echo "[cleanroom] === 自检 ===" >&2
 FAIL=0
 [ -f skill/AGENT_TEST_MATRIX.md ] && { echo "  ✗ AGENT_TEST_MATRIX.md 仍在" >&2; FAIL=1; }
 [ -f skill/CASE_EVIDENCE.md ] && { echo "  ✗ CASE_EVIDENCE.md 仍在" >&2; FAIL=1; }
+[ -f skill/MULTIAGENT_TEST_RESULTS.md ] && { echo "  ✗ MULTIAGENT_TEST_RESULTS.md 仍在" >&2; FAIL=1; }
 [ -s "cases/$CASE/reference.py" ] && { echo "  ✗ 目标 case reference 非空" >&2; FAIL=1; }
 # 泄露关键词扫描：SKILL.md 正文只留通用原理（不点 case 名 + 不给完整公式/性能），允许保留；
 # 本脚本自身的注释/检测正则含这些关键词（作匹配模式与说明，非某 case 的答案），排除；

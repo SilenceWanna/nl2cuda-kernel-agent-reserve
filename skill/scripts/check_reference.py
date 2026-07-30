@@ -132,7 +132,8 @@ def scan_kernels(root, case):
     findings = []
     kdir = os.path.join(root, "cases", case, "kernels")
     for cu in sorted(glob.glob(os.path.join(kdir, "*.cu"))):
-        code = _strip_c_comments(_read(cu))
+        raw = _read(cu)                 # 原始（含注释）——供文件级串行标记检测（标记常在注释里）
+        code = _strip_c_comments(raw)   # 去注释/字符串——供 for/累加等结构检测（避免注释误报）
         # 0. 直调厂商库"成品目标算子"检测（红线§1 细化,aider Cholesky 钻空子暴露）：
         #    cuBLAS/cuSOLVER 作辅助原语(GEMM/TRSM/AXPY/scan 积木)合规,但直调"与 case 目标算子
         #    语义等价的库成品"(分解/求解/变换整题甩给一次库调用)= candidate 就是 baseline 同款厂商
@@ -147,13 +148,18 @@ def scan_kernels(root, case):
                                  f"{os.path.basename(cu)}: 疑似直调厂商库成品目标算子（{name}）——红线§1 细化:cuBLAS/cuSOLVER 只能作"
                                  f"辅助原语(GEMM/TRSM/scan 积木自己拼算法),禁把整个待实现算子直接甩给一次库调用(=candidate 就是 baseline"
                                  f"同款厂商算法,失去手写跑赢意义)。厂商库墙形态正解:手写尽力(可用 GEMM/TRSM 积木)+ 诚实报边界"))
+        # 算法固有串行标记（文件级）：Thomas/回代/前代/消元/分块分解/递推/Cholesky 等本质串行 O(N) 算法，
+        # 其嵌套 for 是算法固有（非 layernorm 式"每行重算整维规约"灾难）。标记常在 host 函数名/文件头注释里
+        # （如 `cholesky_forward`/"blocked Cholesky"），而触发 WARN 的 __global__ body 内未必带词——故按**整个 .cu 文件**
+        # 判豁免（不只单 kernel body），命中则整文件跳过嵌套 for 检测。避免 tridiag/cholesky/gated_ssm 等合规 case 误报。
+        SERIAL_MARK = r"(?i)(thomas|tridiagonal|substitution|elimination|recurrence|cholesky|forward\s*solve|back\s*solve|前代|回代|消元|递推|分块分解)"
+        if re.search(SERIAL_MARK, raw):
+            continue
         # 按 __global__ 切分 kernel 函数体，逐个查嵌套 for + 内层累加
         for km in re.finditer(r"__global__[\s\S]*?\{([\s\S]*?)\n\}", code):
             body = km.group(1)
-            # 算法固有串行标记：Thomas/回代/前代/消元/分块分解/递推等本质串行 O(N) 算法，其嵌套 for 是
-            # 算法固有（非 layernorm 式"每行重算整维规约"灾难）。命中则本 kernel 整体跳过嵌套 for 检测，
-            # 避免对 tridiag(Thomas)/cholesky(分块)/gated_ssm 等已核查合规 case 误报（§33/§34 记录的放行）。
-            if re.search(r"(?i)(thomas|tridiagonal|substitution|elimination|recurrence|cholesky|forward\s*solve|back\s*solve|前代|回代|消元|递推|分块分解)", body):
+            # 双保险：单 kernel body 内也带串行标记则跳过本 kernel（文件级已豁免时走不到这，保留以防独立复用）。
+            if re.search(SERIAL_MARK, body):
                 continue
             # 找形如 for(...; VAR < BOUND; ...) 的循环头，且循环变量步进为 ++（非 grid-stride 的 +=blockDim）
             # grid-stride（d += blockDim.x / gridDim）是正常并行，不算灾难；++/++VAR 的串行标量循环才可疑。
