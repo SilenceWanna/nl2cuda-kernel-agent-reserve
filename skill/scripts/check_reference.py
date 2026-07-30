@@ -150,6 +150,11 @@ def scan_kernels(root, case):
         # 按 __global__ 切分 kernel 函数体，逐个查嵌套 for + 内层累加
         for km in re.finditer(r"__global__[\s\S]*?\{([\s\S]*?)\n\}", code):
             body = km.group(1)
+            # 算法固有串行标记：Thomas/回代/前代/消元/分块分解/递推等本质串行 O(N) 算法，其嵌套 for 是
+            # 算法固有（非 layernorm 式"每行重算整维规约"灾难）。命中则本 kernel 整体跳过嵌套 for 检测，
+            # 避免对 tridiag(Thomas)/cholesky(分块)/gated_ssm 等已核查合规 case 误报（§33/§34 记录的放行）。
+            if re.search(r"(?i)(thomas|tridiagonal|substitution|elimination|recurrence|cholesky|forward\s*solve|back\s*solve|前代|回代|消元|递推|分块分解)", body):
+                continue
             # 找形如 for(...; VAR < BOUND; ...) 的循环头，且循环变量步进为 ++（非 grid-stride 的 +=blockDim）
             # grid-stride（d += blockDim.x / gridDim）是正常并行，不算灾难；++/++VAR 的串行标量循环才可疑。
             fors = list(re.finditer(r"for\s*\(([^;]*);([^;]*);([^)]*)\)", body))
@@ -158,13 +163,28 @@ def scan_kernels(root, case):
                 is_serial = re.search(r"\+\+|\-\-|\+=\s*1\b", step) and not re.search(r"blockDim|gridDim|blockIdx|warpSize|\*\s*\d", step)
                 if not is_serial:
                     continue
-                # 外层是串行标量循环（如 for b<B ++b）——看其后是否紧跟另一个 for 且内含 += 累加（重算规约）
+                # 关键收紧（消误报）：layernorm 式 O(N^2) 灾难本质是"外层沿大数据维度串行 + 内层沿另一大
+                # 数据维度重算规约"（for b<B { for d<D sum+=x[b*D+d] }）。双重判据：外层与内层边界都须是大数据
+                # 维度名（N/M/B/rows/cols/size/D/H/W/T/C 等）才报；编译期小常量/tile/秩（kTopK/RN/RM/dlim/
+                # block_size）→ 寄存器分块/小K展开/topk路数，非灾难。rbf(内层 dlim≤TD)、topk(k路)自然不命中。
+                big_dim = r"(?i)^(n|m|b|d|h|w|t|c|rows|cols|ncols|nrows|numrows|numcols|num_\w+|size|length|seq\w*|len|width|height|batch|dim|feat\w*|hidden|channels?)$"
+                cond = outer.group(2)  # 外层循环条件
+                obound = re.search(r"[<>]=?\s*([A-Za-z_]\w*)", cond)
+                oname = obound.group(1) if obound else ""
+                if not oname or not re.match(big_dim, oname):
+                    continue  # 外层边界非大数据维度（小常量/tile/递推变量）→ 非灾难
+                # 外层是大维度串行循环——看其后 400 字符内是否紧跟另一 for，且该内层边界也是大维度 + 有 += 累加
                 tail = body[outer.end(): outer.end() + 400]
-                if re.search(r"for\s*\(", tail) and re.search(r"[a-zA-Z_]\w*\s*\+=", tail):
+                inner = re.search(r"for\s*\([^;]*;([^;]*);", tail)
+                iname = ""
+                if inner:
+                    ib = re.search(r"[<>]=?\s*([A-Za-z_]\w*)", inner.group(1))
+                    iname = ib.group(1) if ib else ""
+                if inner and iname and re.match(big_dim, iname) and re.search(r"[a-zA-Z_]\w*\s*\+=", tail):
                     findings.append(("WARN", "kernel-nested-recompute",
-                                     f"{os.path.basename(cu)}: 疑似嵌套 for 重算规约（外层串行循环内再整维累加）——"
+                                     f"{os.path.basename(cu)}: 疑似嵌套 for 重算规约（外层沿大维度 '{oname}' 串行 + 内层沿 '{iname}' 整维累加）——"
                                      f"若是'每行/每列重算全维 mean/var/sum'即 O(N^2) 性能灾难（layernorm 朴素版曾卡 1228ms）；"
-                                     f"应一 block 一行 block 内规约一次 + 缓存中间量复用。若是小 K 展开/GEMM tiling 可忽略"))
+                                     f"应一 block 一行 block 内规约一次 + 缓存中间量复用。若是小 K 展开/GEMM tiling/算法固有串行可忽略"))
                     break  # 每 kernel 报一次即可
     return findings
 

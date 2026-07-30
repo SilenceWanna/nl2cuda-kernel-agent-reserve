@@ -913,6 +913,21 @@ skill/harness 能保证的（诚实信号）与 agent 能力决定的（优化�
 
 **③ 反向=解析 Φ 算子真赢 cuSOLVER 级 autograd（CUDA 结构性优势,同 tridiag）**：反向 1.25×——candidate 用 cuBLAS TRSM/GEMM 直接实现解析 Φ 反向（`grad_A=sym(L⁻ᵀΦ(LᵀG)L⁻¹)`）,而 baseline 是 cholesky_ex 的 autograd 反向（PyTorch 虽也解 Φ 但路径有额外中间物化/开销）。**与 tridiag（解伴随系统）、gated_ssm/linear_ssm 同类"CUDA 能利用解析数学结构、autograd 路径不如手写"的结构性价值**——即便前向输厂商库,反向仍靠解析结构小胜。
 
-**collected as 第二十三形态参考 case**：codex 版收进主仓 `cases/cholesky/`（分块 Cholesky 前向 + cuBLAS TRSM/GEMM + 解析 Φ 反向 + cholesky_ex/cuSOLVER reference；前 0.31 厂商库墙/反 1.25 真达标,整体 BENCH_FAIL 但反向达标+边界诚实记录）。check_reference kernel-nested WARN 是对分块 Cholesky 串行嵌套 for 的误报（算法固有,放行）。
+**collected as 第二十三形态参考 case**：codex 版收进主仓 `cases/cholesky/`（分块 Cholesky 前向 + cuBLAS TRSM/GEMM + 解析 Φ 反向 + cholesky_ex/cuSOLVER reference；前 0.31 厂商库墙/反 1.25 真达标,整体 BENCH_FAIL 但反向达标+边界诚实记录）。check_reference kernel-nested WARN 是对分块 Cholesky 串行嵌套 for 的误报（算法固有,放行；§35 已收紧根除此误报）。
+
+**⚠️ 三宿主覆盖状态（诚实记录缺口）**：cholesky 的**性能三宿主对照未完整**——**codex 完成**（前 0.31 厂商库墙/反 1.25，上表）；**gptme 未完成**（上次 N=4096 触发本地 WSL 冻结，属环境故障非能力问题，见 [[tar-antivirus-blocked]] 同期环境坑；driver 已加远程墙钟超时兜底防再冻，但未重跑复现）；**aider 未跑**。**为何不强补**：cholesky 是厂商库墙形态（前向注定输 cuSOLVER），三宿主对照的核心价值（看宿主 kernel 实现力分层）在此类"前向本征打不过"形态上意义有限——codex 已确认"前向厂商库墙 + 反向 Φ 算子真赢"的结论，gptme/aider 大概率复现同结论（前向同输、反向看实现力）。**确认闸门层面三宿主已全覆盖**（§32 记录 codex/aider/gptme 点算子名全守闸门），仅性能对照缺 gptme/aider——权衡"重跑触发 WSL 冻结的真实风险 vs 厂商库墙形态补测的边际价值"后，记为**已知缺口**而非强补（符合"诚实报边界"基调）。若后续要补，gptme 用更小 N（≤1024）避开冻结。
 
 **二十三形态光谱更新**：新增**厂商库墙区**——Cholesky 前向（baseline=cuSOLVER）、（潜在:大矩阵 GEMM baseline=cuBLAS、FFT baseline=cuFFT 等厂商库高度优化的稠密线代/变换）。**元规律补充**:baseline 是 NVIDIA 厂商库（cuSOLVER/cuBLAS/cuFFT）时,candidate 手写前向难赢（厂商库墙,同带宽墙是本征边界）——但**反向若有解析数学结构（Φ 算子/伴随系统）仍可能赢 autograd 路径**（Cholesky/tridiag 反向达标即证）。挑战必输形态的价值:①确认厂商库墙是真边界（诚实,非失败）②发现反向的解析结构优势即便前向输仍成立。确认闸门加固经三宿主三算子（grid_sample/Thomas/Cholesky）稳定守住。
+
+
+## 35. check_reference 误报治理：kernel-nested-recompute 收紧到"双大维度"判据（消 4 合规 case 误报）
+
+承 §33/§34 记录的"kernel-nested WARN 对 tridiag(Thomas)/cholesky(分块) 是误报可放行"。系统排查发现该规则对 **4 个全合规 case（rbf/topk/cholesky/tridiag）100% 误报**——信噪比为 0 会训练 agent"狼来了"式忽略所有 WARN，反噬它抓真灾难（layernorm O(B·D²)）的能力，属正在拖后腿的负资产。据 §528"新检测规则须零误报回归"的先例治理。
+
+**根因**：旧判据太宽——"串行 for（`++`步进）+ 400 字符内有另一 for + 有 `+=`"就报。但 4 个误报的嵌套 for 都不是灾难：rbf 是寄存器分块微内核（`for a<RN`/`for b<RM` 小常量 tile + 内层 `dd<dlim` tile 尾点积）、topk 是 k 路串行（`rank<kTopK` 小常量）、tridiag 是 Thomas 算法固有 O(N) 串行递推、cholesky 是分块分解块内串行。
+
+**治理（双重收紧，check_reference.py scan_kernels）**：
+1. **算法固有串行标记白名单**：kernel 体含 `thomas|substitution|elimination|recurrence|cholesky|前代|回代|消元|递推|分块分解` 等标记 → 整 kernel 跳过嵌套检测（tridiag/cholesky/gated_ssm 类本质串行算法放行）。
+2. **双大维度判据**：layernorm 灾难本质是"外层沿大数据维度串行 + 内层沿另一大数据维度重算规约"。故**外层与内层循环边界都须是大数据维度名**（`N/M/B/D/H/W/T/C/rows/cols/size/seq/len/...`）才报；编译期小常量/tile/秩（kTopK/RN/RM/dlim/block_size）任一侧命中即排除。rbf（内层 dlim≤TD tile）、topk（k 路小常量）自然不命中。
+
+**双向校准（同 §528 方法）**：① 消误报——全 24 case 重扫全部 CLEAN，4 误报归零；② 仍抓真灾难——造 layernorm 式 O(B·D²) 朴素 kernel（外层 `for b<B` + 内层 `for d<D` 重算 mean）仍被抓（kernel-nested 命中）。**检测器信噪比恢复正常**：只对真"逐样本×整维重算"报警，不再对寄存器 tiling/小 K 展开/算法固有串行误报。**这再次印证 §528 结论——check_reference 可增量校准，发现误报就收紧判据（同发现漏报就补规则），保持零误报回归。**
