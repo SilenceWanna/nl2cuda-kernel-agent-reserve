@@ -82,19 +82,19 @@
 - **现象**：交付仓 `USAGE.md` 步骤 0（及 README）的 `git clone` URL 仍是旧仓名 `nl2cuda-kernel-agent`。仓库已双仓分离改名——旧名现指向**开发/自测仓 reserve**（`nl2cuda-kernel-agent-reserve`，GitHub 对改名仓有重定向），而交付仓是 `nl2cuda-kernel-agent-skill`。用户照 USAGE 原样 clone 会拿到 reserve 仓（含作者私有内容），而非净化的 skill 交付仓。
 - **期望**：交付仓里所有 clone/下载 URL 指向交付仓自身 `nl2cuda-kernel-agent-skill.git`。
 - **范围**：`USAGE.md` 步骤 0、README.md、`notebooks/run.ipynb`（Colab clone 的 REPO_URL）、`skill/USING_WITH_OTHER_AGENTS.md`（若有 clone 指引）——凡交付物里出现的 clone URL。⚠️ 注意：这些 URL 在**开发仓源文件**里就是旧名（开发仓自己叫这个名合理），需在 `make_delivery.sh` 净化阶段把交付副本的 URL 改写成交付仓名（类似 run_on_a100 净化），否则每次重生又变回旧名。
-- **状态**：🔴 待解决（用户实走时第一步就踩，重要——拿错仓等于净化全白费）。
+- **状态**：✅ **已解决（2026-07-31）**：`make_delivery.sh` 复制后加全局改写步——`re.sub(r"nl2cuda-kernel-agent(?!-)", "nl2cuda-kernel-agent-skill", ...)`（负向断言不误伤已带 -skill/-reserve 后缀，幂等），把交付副本的 clone URL / REPO_URL / cd 目录名 / 标题全改成交付仓名。开发仓源保持旧名不变。独立验证：clone 交付仓后零裸旧名，所有 URL 指向 `nl2cuda-kernel-agent-skill`。
 
 ### #8　路径 C（远程 SSH）只给了 WSL/rsync 写法，未照顾 Windows 原生 driver 🔴
 - **现象**：用户 driver 在 **Windows 原生**（不进 WSL），但 USAGE 路径 C 的代码同步给的是 `rsync -az ./ <别名>:~/...`（Windows 默认无 rsync）和 `tar czf -` 管道（Linux tar 写法）。Windows 用户无法直接照做。
 - **期望**：路径 C 补 **Windows 原生**同步方式——`scp -r <文件列表> <别名>:~/dir/`（Windows 自带 OpenSSH 的 scp，经 `~/.ssh/config` 的 ProxyJump 同样两跳直达），或 Windows 自带 `tar.exe`(bsdtar) 打包。并说明 `~/.ssh/config` 在 Windows 放 `C:\Users\<你>\.ssh\config`。
 - **范围**：`USAGE.md` 路径 C 的"代码同步"步。
-- **状态**：🔴 待解决。
+- **状态**：✅ **已解决（2026-07-31）**：路径 C 重写为"以 Windows 两跳为主例"，代码同步给 **Windows `scp -r <文件列表>` + Linux/WSL `rsync`** 两版；补 `~/.ssh/config` 在 Windows 的位置（`C:\Users\你\.ssh\config`）、ProxyJump 双跳模板、一步登入+挑空闲卡验证。
 
 ### #9　远程命令里 `<占位符>` 尖括号被用户连着敲进去 → bash 语法错 🔴
 - **现象**：USAGE 路径 C 的远程命令用 `CUDA_VISIBLE_DEVICES=<空闲卡号>` 这种尖括号占位符。用户照敲成 `CUDA_VISIBLE_DEVICES=<6>`，远程 bash 把 `<` 当重定向符号，报 `未预期的符号 '6' 附近有语法错误`。
 - **期望**：占位符改用不会被 shell 误解析的写法——如给一个**可直接跑的具体示例**（`CUDA_VISIBLE_DEVICES=0`）+ 旁注"把 0 换成你的空闲卡号"，或用 `你的卡号` 中文占位（敲的人不会连中文一起留）。PowerShell 里远程命令的 `$` 转义（`` `$ ``）也补个提示，或建议"把远程命令写成 .sh 放远程、本地只 `ssh <别名> bash ~/run.sh`"躲开引号地狱。
 - **范围**：`USAGE.md` 路径 C（及步骤 2/3 里所有含 `<...>` 占位的远程命令）。
-- **状态**：🔴 待解决。
+- **状态**：✅ **已解决（2026-07-31）**：路径 C 的远程命令改用**可直接跑的具体示例**（`CUDA_VISIBLE_DEVICES=0` + 旁注"换成你挑的空闲卡号"），说明性占位改**中文**（`你的卡号`，敲的人不会连中文一起留）；并补 PowerShell `` `$ `` 转义提示 + "把远程命令写进 .sh 躲引号地狱"的替代法 + "非交互 ssh 须显式 export PATH"提示。
 
 ---
 

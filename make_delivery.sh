@@ -78,6 +78,26 @@ rm -rf "$DEST"; mkdir -p "$DEST"
 MISS=0
 for p in "${INCLUDE_DIRS[@]}" "${INCLUDE_FILES[@]}"; do copy_one "$p" || MISS=1; done
 
+# ---- 改写仓名：开发仓源文件里 clone URL/目录名/标题是旧仓名 nl2cuda-kernel-agent（开发仓自己叫这个名合理），
+#      但交付物要指向交付仓 nl2cuda-kernel-agent-skill，否则用户照 USAGE clone 会（经 GitHub 改名重定向）
+#      拿到开发/自测仓 reserve（含私有内容）。故在交付副本上全局改写（E2E #7）。
+#      负向断言 (?!-) 保证不误伤已带后缀的名字（-skill/-reserve），幂等可重跑。
+DELIVERY_REPO_SLUG="nl2cuda-kernel-agent-skill"
+find "$DEST" -type f \( -name '*.md' -o -name '*.ipynb' -o -name '*.py' -o -name '*.sh' -o -name '*.txt' \) -print0 \
+  | while IFS= read -r -d '' f; do
+      python - "$f" "$DELIVERY_REPO_SLUG" <<'PYEOF'
+import re, sys
+path, slug = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8") as fh:
+    txt = fh.read()
+# 把裸旧名 nl2cuda-kernel-agent（其后不是 - 连字符，即未带 -skill/-reserve 后缀）改成交付仓名
+new = re.sub(r"nl2cuda-kernel-agent(?!-)", slug, txt)
+if new != txt:
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(new)
+PYEOF
+    done
+
 # ---- 净化：把交付副本里方法论/约定文件的作者私有自测内容(run_on_a100/双跳SSH等)洗成通用 verify/bench ----
 #      主仓正文保持原样(=作者开发/测试仓)，只改目标目录副本。规则失效(drift)或有残留会 exit 1。
 if ! PYTHONIOENCODING=utf-8 PYTHONUTF8=1 python "$SRC/skill/scripts/_sanitize_for_delivery.py" "$DEST"; then

@@ -67,15 +67,53 @@ rbf `verify` 全 PASS 即环境就绪，进步骤 2。
 
 ### 路径 C：本地无 GPU、SSH 连远程 GPU 机
 
-很常见（本地开发机无卡，用远程/云 GPU；甚至需经跳板机中转两跳）。做法：
+很常见（本地开发机无卡，用远程/云 GPU；甚至需经跳板机中转两跳）。下面以「本地 Windows、经跳板机两跳到远程 GPU 机」为例（单跳更简单，去掉 ProxyJump 即可）。
 
-1. **配好 SSH**：能从本地直连（或经跳板机）到远程 GPU 机。建议在 `~/.ssh/config` 里配置好 Host 别名与跳板（`ProxyJump`），使 `ssh <别名>` 一步登入。密钥自行管理，**不要提交进仓库**。
-2. **远程机备环境**：在远程机上按路径 B 装好 CUDA toolkit + PyTorch(cuda) + ninja。
-3. **代码同步**：把本仓库同步到远程（任选）——远程 `git clone` 本 public 仓、或本地 `rsync -az ./ <别名>:~/nl2cuda/`、或 `scp`。以后每次改完 `cases/<name>/` 都同步过去再跑。
-4. **在远程跑冒烟**：`ssh <别名> 'cd ~/nl2cuda && python skill/scripts/verify_case.py --case rbf && python skill/scripts/bench_case.py --case rbf'`。
-5. rbf `verify` 全 PASS 即就绪。（步骤 2 起，让 agent 按同样的"同步→远程跑→读结果"方式自测你的新算法。）
+**1. 配 SSH 别名（把多跳收成一个别名，一步登入）**
 
-> `framework/loader.py` 默认为 sm_75(T4) + sm_80(A100) 编译。其他架构用 `export CUDA_ARCHS="XX"`（如 `90` for H100）。
+在 `~/.ssh/config` 里配（**Windows 放 `C:\Users\你的用户名\.ssh\config`**；Linux/WSL 放 `~/.ssh/config`）：
+```sshconfig
+Host gpubox                       # 远程 GPU 机（最终目标）
+    HostName 10.0.0.2             # 换成你的 GPU 机地址
+    User youruser
+    IdentityFile ~/.ssh/your_key
+    IdentitiesOnly yes
+    ProxyJump jump                # 若无跳板机，删掉这一行
+Host jump                         # 跳板机（无则整段删）
+    HostName 10.0.0.1
+    User jumpuser
+    IdentityFile ~/.ssh/your_key
+```
+密钥自行管理、**不要提交进任何仓库**。验证一步登入 + 挑一张空闲卡（记下 `memory.used` 最小的那号，下面要用）：
+```bash
+ssh gpubox "nvidia-smi --query-gpu=index,memory.used --format=csv,noheader"
+```
+
+**2. 远程机备环境**：在远程机上按路径 B 装好 CUDA toolkit + PyTorch(cuda) + ninja。
+
+**3. 同步代码到远程**（本地已 clone 交付仓，在其根目录下操作）：
+- **Windows（用自带的 `scp`，经上面别名同样两跳直达）**：
+  ```powershell
+  ssh gpubox "mkdir -p ~/nl2cuda"
+  scp -r framework skill cases scripts notebooks requirements.txt AGENTS.md CLAUDE.md CONVENTIONS.md README.md USAGE.md gpubox:~/nl2cuda/
+  ```
+- **Linux / WSL（用 `rsync`）**：`rsync -az --exclude='.git' ./ gpubox:~/nl2cuda/`
+- 以后每次改完 `cases/<name>/` 都同步过去再跑。
+
+**4. 在远程跑冒烟验证**（⚠️ 三个易踩点，照做即可）：
+- **非交互 ssh 不加载 shell profile**，命令里要**显式 `export PATH`** 指向远程的 conda/CUDA，否则找不到 python/nvcc；
+- **必须显式指定空闲卡号**（把下面的 `0` 换成第 1 步挑的号，直接写数字，别写成 `<0>`）；
+- **Windows PowerShell 里 `$` 要写成 `` `$ ``**（反引号转义）才能原样传给远程 bash（Linux/WSL 下去掉反引号）。
+  ```powershell
+  # Windows PowerShell（远程路径按你的实际 conda/CUDA 位置改）：
+  ssh gpubox "export PATH=`$HOME/miniconda3/bin:/usr/local/cuda/bin:`$PATH; cd ~/nl2cuda && CUDA_VISIBLE_DEVICES=0 python framework/smoke_test.py && CUDA_VISIBLE_DEVICES=0 python skill/scripts/verify_case.py --case rbf"
+  ```
+  > 嫌引号/转义烦：把这串远程命令写进一个 `run.sh` 放到远程，本地只 `ssh gpubox "bash ~/run.sh"`，躲开引号地狱。
+- 首次会编译 rbf kernel（+ torch.compile baseline），要等几分钟、中途无输出正常，别当卡死。
+
+**5. rbf `verify` 全 PASS 即就绪。** 步骤 2 起，让 agent 按同样的"同步→远程跑→读结果"方式自测你的新算法——告诉 agent 你的别名（如 `ssh gpubox` 一步可登）、同步命令、以及远程跑命令要带的 `export PATH` 和 `CUDA_VISIBLE_DEVICES=你的卡号`。
+
+> `framework/loader.py` 默认为 sm_75(T4) + sm_80(A100) 编译。其他架构用 `export CUDA_ARCHS="架构号"`（如 A100 用 `80`、H100 用 `90`）。
 
 ---
 
