@@ -99,9 +99,8 @@ LINE_RULES = [
     ("skill/SKILL.md",
      "> （各区间的**具体 case + 实测加速比**见 [CASE_EVIDENCE.md](CASE_EVIDENCE.md)，三宿主测试时剥离。）",
      "> （据此五类先归类你的算法，再定优化预期与策略。）"),
-    ("skill/SKILL.md",
-     "**判达标必须计算主导区多规模验证**（具体翻车实测见 [CASE_EVIDENCE.md](CASE_EVIDENCE.md)）。",
-     "**判达标必须计算主导区多规模验证**。"),
+    # 注：原第 3 条 SKILL CASE_EVIDENCE dead-link 规则（"判达标...具体翻车实测见 CASE_EVIDENCE"）已随
+    # §37 LayerNorm 反向结论修正把该行改写为不含 CASE_EVIDENCE 引用，故删除该规则（否则 drift 报错）。
     # ---- README.md：去掉指向内部测试矩阵的悬空引用 ----
     ("README.md",
      "。三宿主（aider/gptme/codex）逐形态对照与结论见 [`skill/AGENT_TEST_MATRIX.md`](skill/AGENT_TEST_MATRIX.md)。",

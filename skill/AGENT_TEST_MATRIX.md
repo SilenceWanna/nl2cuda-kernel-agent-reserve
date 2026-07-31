@@ -954,3 +954,16 @@ skill/harness 能保证的（诚实信号）与 agent 能力决定的（优化�
 - **`skill/MULTIAGENT_TEST_RESULTS.md` 漏删**：它记录各宿主对某 case 的测试结果/性能（虽不含 cholesky，但未来测 softmax_ce 就是泄露源）。已补进 `prepare_cleanroom.sh` 删除清单 + 自检。
 - **check_reference 白名单粒度不足**：算法固有串行标记（cholesky/thomas 等）常在 host 函数名/注释里，而误报的 `__global__` body 内未必带词——原按 kernel-body 判豁免，对 gptme 的 cholesky.cu 仍误报。已改为**文件级豁免**（整个 .cu 含标记即跳过嵌套 for 检测，用原始含注释文本判）。校准：全 24 case 仍 CLEAN + 真灾难（无标记的 layernorm 式）仍被抓。
 - **假 PASS 陷阱（新）**：gptme 曾打印 `VERDICT=PASS fwd=1.09x bwd=1.40x`——实为抄 bench_case.py 注释里的**示例字符串**冒充。核查 agent 自报 VERDICT 时须防它打印文档/代码里的示例数字，以 run_on_a100 真实末行为准。
+
+
+## 37. 端到端测试（交付仓 codex 全流程）+ LayerNorm 反向旧结论被推翻（2026-07-31）
+
+用户从**交付仓**（净化通用版 nl2cuda-kernel-agent-skill）用 codex 走完整端到端流程，做 LayerNorm case。这是"用户按 USAGE 从零到 .cu"的首次真实走通，产出两个高价值结果：
+
+**① 交付仓端到端跑通 + 净化未伤能力**：codex 从**净化后的 skill**（无 run_on_a100/AUTONOMOUS_LOOP 等作者私有内容）自主推导出完整 LayerNorm——reference（CLEAN）+ 前反向 kernel + op.py（存 mean/inv_std 复用、无计时特化）+ bench.env（固定计算主导区 LN_B=262144 避短核）。5 种子正确性全 PASS，守 framework 只读。**证明净化只洗文档、没伤方法论能力**——codex 靠通用方法论就复现了开发仓内化的"缓存 mean/inv_std + 二维分块列规约 + float4 融合"手段。
+
+**② LayerNorm 反向"也带宽墙"旧结论（§29）被推翻——独立实测核验**：codex 报反向 1.91×，与 §29"LayerNorm 反向也带宽墙、计算主导区打不过（0.99）"矛盾。**因诚实性核验（不信自报），A100 实测 codex 版反向双规模**：LN_B=262144 反 **1.89×**（baseline 4.71ms/candidate 2.49ms）、524288 反 **1.94×**（9.34/4.81ms）——**换 2× 规模加速比稳且略升**（弱 baseline/短核会掉，这里不掉=真优势），baseline 绝对耗时随规模线性（非畸形慢）。**判定真优化**：机理是 codex 把 **dX+dgamma+dbeta 融进单个 kernel、grad_Y/X 各只读一遍**（`layernorm_backward_fused_1024_kernel`），访存约为 §29 当年测的**拆分两 kernel 版**（`_x_kernel` + `_param_kernel`，各读一遍=共两遍）的一半——**单 kernel 全融合把访存减半、翻过带宽墙**。前向 1.00× 则确实带宽墙（codex 诚实报 FAIL，1.37TB/s 与 torch.compile 重合）。
+
+**结论修正（已回写 CASE_EVIDENCE + SKILL 正文）**：**"低算术强度整行归一化反向也带宽墙"是过度概括**——反向能否赢**取决于 kernel 融合结构**：多梯度融进单 kernel 各只读一遍输入→访存减半真赢（1.9×），拆成多 kernel 各读一遍→撞墙（0.99）。§29 旧结论是拆分版的结论，非算子本征。**元教训**：带宽墙判定要分前/反向、分 kernel 结构，别按算子名一刀切；且 agent 自报的反超旧结论的数字，务必换规模实测核验真伪（这次是真、但流程上必须验）。
+
+**collected**：codex 版 LayerNorm（单 kernel 全融合反向）是"整行归一化反向靠融合翻带宽墙"的范例，优于开发仓 test_kt 的拆分版。端到端也验证了交付仓即装即用 + 净化无损。

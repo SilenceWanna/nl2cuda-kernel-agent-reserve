@@ -31,10 +31,10 @@
 
 - **maxpool 前向**：三宿主一致过不了（1.03/0.998/1.02）——带宽墙铁证。反向 4.58× 赢（argmax 散回可优化）。
 - **归一化 reduce 家族由规模分野**：
-  - 小 reduce（~1K，LayerNorm/RMSNorm D=1024/l2norm/welford/temperature_softmax 前向）→ 带宽墙。LayerNorm 坐实：前反向放大规模均掉破 1.05，寄存器缓存省第二遍 X 读无感（1.012→1.019）。
+  - 小 reduce（~1K，LayerNorm/RMSNorm D=1024/l2norm/welford/temperature_softmax）**前向**→ 带宽墙。LayerNorm 前向坐实：放大规模掉破 1.05，寄存器缓存省第二遍 X 读无感（1.012→1.019）；codex 交付仓端到端复验前向 1.00×（1.37TB/s 与 torch.compile 重合）。
   - 大 reduce/点积（~万级或 exp）→ 可真赢。GroupNorm(组内 1.2万~4万)前向 1.28~1.40；cosine_sim 2.12；softmax_ce 1.35。
-  - 反向不一定更好赢：GroupNorm/cosine_sim/softmax_ce 反向可优化(1.2~1.4)；LayerNorm/welford/temperature_softmax 反向也带宽墙。
-- **本征边界 vs 没优化够**：前者三宿主一致卡同点且放大仍打不过（maxpool/LayerNorm）；后者同 case 有宿主赢有宿主挂（attention/scatter——codex 赢 gptme/aider 挂，实现力空间）。
+  - **反向要看 kernel 结构，不是一概带宽墙（2026-07-31 端到端复验纠正旧结论）**：LayerNorm 反向若把 dX+dgamma+dbeta **融进单个 kernel、grad_Y/X 各只读一遍**（codex 交付仓版），访存约为"拆分两 kernel（各读一遍=共两遍）"的一半，**能翻过带宽墙真赢**——A100 实测 LN_B=262144 反 1.89×、524288 反 1.94×（换 2× 规模加速比稳且略升，baseline 4.7/9.3ms 绝对耗时合理，非弱 baseline）。**旧 §29"LayerNorm 反向也带宽墙 0.99"是拆分两 kernel 版的结论，被单 kernel 全融合版推翻**。GroupNorm/cosine_sim/softmax_ce 反向亦可优化(1.2~1.4)；welford/temperature_softmax 反向未做同款融合复验、暂存疑。
+- **本征边界 vs 没优化够**：前者三宿主一致卡同点且放大仍打不过（maxpool 前向、LayerNorm **前向**）；后者同 case 有宿主赢有宿主挂（attention/scatter——codex 赢 gptme/aider 挂，实现力空间）。⚠️ LayerNorm **反向**不属带宽墙——单 kernel 全融合能真赢（见上），说明"带宽墙"要分前/反向、分 kernel 结构判，别整例算子一刀切。
 
 ## LayerNorm 反向"能优化≠能赢"实测教训（对应 SKILL "识别本征边界"的告诫）
 
