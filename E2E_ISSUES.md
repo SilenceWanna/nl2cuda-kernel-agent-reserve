@@ -22,6 +22,7 @@
 
 - **第 1 轮（2026-07-30，首次评审 USAGE.md 初稿）**：用户通读 USAGE.md 初稿，提出 6 个问题（下方 #1–#6）。尚未真正跑端到端，属"说明书评审"阶段暴露的问题。
 - **第 2 轮（2026-07-31，用户亲自按交付仓 USAGE 实走路径 C）**：用户本地 Windows 无 GPU、经跳板机双跳连远程 A100，按路径 C 配置时暴露 3 个问题（下方 #7–#9）。属真正实走阶段的问题（前置：预跑已确认交付仓 rbf 在 A100 即装即用 verify/bench 全 PASS）。
+- **第 3 轮（2026-07-31，准备 aider+gptme 端到端测试时厘清路径 A/B/C 执行模型）**：确定 gptme 走路径 A（半自动）、aider 在 A100 上装走路径 B。厘清中发现路径 A 对本地 CLI agent 只能半自动（#10）。
 
 ---
 
@@ -90,11 +91,17 @@
 - **范围**：`USAGE.md` 路径 C 的"代码同步"步。
 - **状态**：✅ **已解决（2026-07-31）**：路径 C 重写为"以 Windows 两跳为主例"，代码同步给 **Windows `scp -r <文件列表>` + Linux/WSL `rsync`** 两版；补 `~/.ssh/config` 在 Windows 的位置（`C:\Users\你\.ssh\config`）、ProxyJump 双跳模板、一步登入+挑空闲卡验证。
 
-### #9　远程命令里 `<占位符>` 尖括号被用户连着敲进去 → bash 语法错 🔴
+### #9　远程命令里 `<占位符>` 尖括号被用户连着敲进去 → bash 语法错 ✅
 - **现象**：USAGE 路径 C 的远程命令用 `CUDA_VISIBLE_DEVICES=<空闲卡号>` 这种尖括号占位符。用户照敲成 `CUDA_VISIBLE_DEVICES=<6>`，远程 bash 把 `<` 当重定向符号，报 `未预期的符号 '6' 附近有语法错误`。
 - **期望**：占位符改用不会被 shell 误解析的写法——如给一个**可直接跑的具体示例**（`CUDA_VISIBLE_DEVICES=0`）+ 旁注"把 0 换成你的空闲卡号"，或用 `你的卡号` 中文占位（敲的人不会连中文一起留）。PowerShell 里远程命令的 `$` 转义（`` `$ ``）也补个提示，或建议"把远程命令写成 .sh 放远程、本地只 `ssh <别名> bash ~/run.sh`"躲开引号地狱。
 - **范围**：`USAGE.md` 路径 C（及步骤 2/3 里所有含 `<...>` 占位的远程命令）。
 - **状态**：✅ **已解决（2026-07-31）**：路径 C 的远程命令改用**可直接跑的具体示例**（`CUDA_VISIBLE_DEVICES=0` + 旁注"换成你挑的空闲卡号"），说明性占位改**中文**（`你的卡号`，敲的人不会连中文一起留）；并补 PowerShell `` `$ `` 转义提示 + "把远程命令写进 .sh 躲引号地狱"的替代法 + "非交互 ssh 须显式 export PATH"提示。
+
+### #10　路径 A（Colab）对本地 CLI agent 只能半自动，USAGE 未说明 🔴
+- **现象**：USAGE 路径 A 让用户"打开 Colab notebook 跑"，隐含 agent 能在 Colab 里自测。但 Colab GPU 在 Google 云端，**本地跑的 CLI agent（aider/gptme）进程碰不到它**——只能"本地 agent 产码 → 用户手动把 case 搬进 Colab 跑 verify/bench → 结果回贴给 agent 迭代"的**半自动**模式，agent 不自主自测。厘清 aider/gptme 端到端路径时发现（大多数用户若本地跑 agent + 用 Colab，都会撞上这个）。
+- **期望**：USAGE 路径 A 明确两种子形态并给流程——**A-1 半自动**（本地 agent 产码 + 用户中转 Colab 跑 + 回贴，本地 CLI agent 的现实路径）；**A-2 全自动**（agent 本身运行在 Colab 环境内，如 Colab terminal 里驱动，才能自主摸 GPU）。并点明"agent 全自主自测需要 agent 与 GPU 同环境（路径 B 本机有卡 / 路径 C SSH 到有卡机 / 路径 A-2 agent 在 Colab 内）；本地 agent + Colab 只能半自动"。
+- **范围**：`USAGE.md` 路径 A、步骤 3（自主自测的前提）。
+- **状态**：🔴 待解决（第 3 轮记录，先记后修——本轮先做 aider/gptme 端到端，问题攒一起改）。
 
 ---
 
