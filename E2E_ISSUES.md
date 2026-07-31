@@ -21,6 +21,7 @@
 ## 记录轮次
 
 - **第 1 轮（2026-07-30，首次评审 USAGE.md 初稿）**：用户通读 USAGE.md 初稿，提出 6 个问题（下方 #1–#6）。尚未真正跑端到端，属"说明书评审"阶段暴露的问题。
+- **第 2 轮（2026-07-31，用户亲自按交付仓 USAGE 实走路径 C）**：用户本地 Windows 无 GPU、经跳板机双跳连远程 A100，按路径 C 配置时暴露 3 个问题（下方 #7–#9）。属真正实走阶段的问题（前置：预跑已确认交付仓 rbf 在 A100 即装即用 verify/bench 全 PASS）。
 
 ---
 
@@ -77,6 +78,24 @@
 - **范围**：`USAGE.md` 步骤 3/4；**skill 新增环境自适应自测方法**（新能力）；与 #5 净化联动（新方法必须是通用的，不含作者私有脚本）。
 - **状态**：✅ **已解决（2026-07-30）**：SKILL **步骤 0 新增"确认 GPU 环境 + 据环境类型准备自测"**——三类环境（Colab/本地WSL/远程SSH）各给 agent 的自测方式表 + 通用命令，born-general 无作者私有脚本（进交付物经净化脚本兜底扫描零残留）。USAGE 步骤 2 加"先告诉 agent 环境类型"、步骤 3 改为"agent 自主自测（你只在数学确认点介入）"。
 
+### #7　步骤 0 clone 入口 URL 是旧仓名（改名后失效/指向错仓）🔴
+- **现象**：交付仓 `USAGE.md` 步骤 0（及 README）的 `git clone` URL 仍是旧仓名 `nl2cuda-kernel-agent`。仓库已双仓分离改名——旧名现指向**开发/自测仓 reserve**（`nl2cuda-kernel-agent-reserve`，GitHub 对改名仓有重定向），而交付仓是 `nl2cuda-kernel-agent-skill`。用户照 USAGE 原样 clone 会拿到 reserve 仓（含作者私有内容），而非净化的 skill 交付仓。
+- **期望**：交付仓里所有 clone/下载 URL 指向交付仓自身 `nl2cuda-kernel-agent-skill.git`。
+- **范围**：`USAGE.md` 步骤 0、README.md、`notebooks/run.ipynb`（Colab clone 的 REPO_URL）、`skill/USING_WITH_OTHER_AGENTS.md`（若有 clone 指引）——凡交付物里出现的 clone URL。⚠️ 注意：这些 URL 在**开发仓源文件**里就是旧名（开发仓自己叫这个名合理），需在 `make_delivery.sh` 净化阶段把交付副本的 URL 改写成交付仓名（类似 run_on_a100 净化），否则每次重生又变回旧名。
+- **状态**：🔴 待解决（用户实走时第一步就踩，重要——拿错仓等于净化全白费）。
+
+### #8　路径 C（远程 SSH）只给了 WSL/rsync 写法，未照顾 Windows 原生 driver 🔴
+- **现象**：用户 driver 在 **Windows 原生**（不进 WSL），但 USAGE 路径 C 的代码同步给的是 `rsync -az ./ <别名>:~/...`（Windows 默认无 rsync）和 `tar czf -` 管道（Linux tar 写法）。Windows 用户无法直接照做。
+- **期望**：路径 C 补 **Windows 原生**同步方式——`scp -r <文件列表> <别名>:~/dir/`（Windows 自带 OpenSSH 的 scp，经 `~/.ssh/config` 的 ProxyJump 同样两跳直达），或 Windows 自带 `tar.exe`(bsdtar) 打包。并说明 `~/.ssh/config` 在 Windows 放 `C:\Users\<你>\.ssh\config`。
+- **范围**：`USAGE.md` 路径 C 的"代码同步"步。
+- **状态**：🔴 待解决。
+
+### #9　远程命令里 `<占位符>` 尖括号被用户连着敲进去 → bash 语法错 🔴
+- **现象**：USAGE 路径 C 的远程命令用 `CUDA_VISIBLE_DEVICES=<空闲卡号>` 这种尖括号占位符。用户照敲成 `CUDA_VISIBLE_DEVICES=<6>`，远程 bash 把 `<` 当重定向符号，报 `未预期的符号 '6' 附近有语法错误`。
+- **期望**：占位符改用不会被 shell 误解析的写法——如给一个**可直接跑的具体示例**（`CUDA_VISIBLE_DEVICES=0`）+ 旁注"把 0 换成你的空闲卡号"，或用 `你的卡号` 中文占位（敲的人不会连中文一起留）。PowerShell 里远程命令的 `$` 转义（`` `$ ``）也补个提示，或建议"把远程命令写成 .sh 放远程、本地只 `ssh <别名> bash ~/run.sh`"躲开引号地狱。
+- **范围**：`USAGE.md` 路径 C（及步骤 2/3 里所有含 `<...>` 占位的远程命令）。
+- **状态**：🔴 待解决。
+
 ---
 
 ## 问题间的依赖与建议顺序
@@ -85,3 +104,8 @@
 2. **再 #6 + #4**——在净化后的干净方法论上，新增"环境自适应自测"通用方法 + 简化为纯自然语言输入。
 3. **同时 #1/#2/#3**——USAGE.md 的环境章节重构（WSL 说明、路径 A/B/C、步骤去重）。
 4. 每解决一项，更新本文件对应状态为 ✅ 并附 commit。
+
+**第 2 轮（#7–#9）建议顺序**：
+1. **先 #7（clone URL 旧仓名）**——最重要：用户拿错仓等于净化全白费；须在 `make_delivery.sh` 净化阶段改写交付副本的 clone URL（否则每次重生又变回旧名），改完 `make_delivery.sh --push` 重推交付仓。
+2. **再 #8 + #9**——USAGE 路径 C 补 Windows 原生同步（scp）+ 修占位符尖括号（改可直接跑的示例/中文占位）。二者都是 USAGE 文本改动，改完随交付物一起重推。
+3. 都属"面向照着敲的新手不够友好"，本质是 USAGE 假设了 Linux/WSL + 熟悉占位符约定，需照顾 Windows 原生 driver。
