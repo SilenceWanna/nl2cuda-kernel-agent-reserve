@@ -271,11 +271,8 @@ python skill/scripts/bench_case.py --case <name>
 - 性能：前向、反向各自相对 `torch.compile`（默认 mode）≥1.05×，3 次重跑 CV≤5%。
 - **稳定过线**：加速比擦线（1.05–1.10× 区间）时，单次 PASS 不算达标——须连跑 3 次全 PASS 才算真达标；
   共享/繁忙 GPU 上擦线加速比会在达标线上下抖动，达标应留安全余量（目标 ≥1.10×）而非骑在 1.05 线。
-- **警惕短核假象**：若 baseline 前/反向 <0.15ms 却给高加速比（1.2×+），多半是固定开销虚高。**只要 config 的规模支持 env 覆盖，
-  `run_on_a100.sh` 会自动探测短核并放大规模重测（harness 兜底，无需你建 bench.env）**——所以务必让 config 参数化规模
-  （`os.environ.get("XXX", "默认")`）。可选：短核 case 建 `bench.env` 声明规模更明确。实测：aider 的 RMSNorm 短核下显示 前1.22/反1.43，
-  harness 自动放大后真实 前0.86/反1.00 FAIL——兜底让不建 bench.env 的 agent 也不被短核假象骗。
-- **规模挑选（短核假象的宿主自选变种，禁）**：诚实做法是**固定一个计算主导区规模**（baseline ≥1ms）把 kernel 优化到达标，**禁止从多个规模里挑一个恰好擦线能过的短核规模**（让固定开销撑高加速比）凑 PASS。**判据：加速比强规模依赖**——同一 kernel 换 2×/4× 规模，若擦线侧从 PASS 掉破 1.05（如 GroupNorm gptme：GN_N=384 前1.07 PASS，768/1536 前1.048/1.035 FAIL），说明前向优势来自固定开销摊薄而非 kernel 真更快，是**规模挑选**。`run_on_a100.sh` 已自动检测：擦线 PASS+短核时自动 ×2/×4 复测，掉破 1.05 判 `VERDICT=PASS_SCALE_SUSPECT`（strict 下算未达标，逼你优化 kernel 本体而非挑规模）。**对策**：选规模让 baseline 进计算主导区（≥1ms）再优化；bench.env 声明的规模要经得起放大交叉验证。
+- **警惕短核假象**：若 baseline 前/反向 <1ms 却给高加速比（1.2×+），多半是固定开销（kernel launch/同步）虚高。**`bench_case.py` 会自动检测**——baseline 前或反向 <1ms 时打印"短核假象警告"、`--emit-verdict` 下判 `VERDICT=SHORT_KERNEL_SUSPECT`（`--strict` 下算未达标），提示你放大规模复测。**对策**：让 config 的规模支持 env 覆盖（`os.environ.get("XXX","默认")`），用大规模复测——如 `RMS_B=262144 python skill/scripts/bench_case.py --case <名>`，把 baseline 抬到 ≥1ms 的计算主导区再判。实测：aider 的 RMSNorm 短核下显示 前1.51/反1.85 "PASS"，放大到 RMS_B=262144 后真实 前0.91/反1.05→2×规模1.04 FAIL——短核假象会把带宽墙包装成达标，务必放大验证。
+- **规模挑选（短核假象的宿主自选变种，禁）**：诚实做法是**固定一个计算主导区规模**（baseline ≥1ms）把 kernel 优化到达标，**禁止从多个规模里挑一个恰好擦线能过的短核规模**（让固定开销撑高加速比）凑 PASS。**判据：加速比强规模依赖**——同一 kernel 换 2×/4× 规模，若擦线侧从 PASS 掉破 1.05（如某前向 384 规模 1.07 PASS，768/1536 掉 1.048/1.035 FAIL），说明优势来自固定开销摊薄而非 kernel 真更快，是**规模挑选**。**对策**：选规模让 baseline 进计算主导区（≥1ms）再优化；换 2×/4× 规模交叉验证，加速比稳（真优势）才算数、放大就掉（短核假象）不算。
 - 两者同时满足即达成。
 
 ## 新增一个算法 case

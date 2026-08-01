@@ -113,6 +113,8 @@ ssh gpubox "nvidia-smi --query-gpu=index,memory.used --format=csv,noheader"
 
 **5. rbf `verify` 全 PASS 即就绪。** 步骤 2 起，让 agent 按同样的"同步→远程跑→读结果"方式自测你的新算法——告诉 agent 你的别名（如 `ssh gpubox` 一步可登）、同步命令、以及远程跑命令要带的 `export PATH` 和 `CUDA_VISIBLE_DEVICES=你的卡号`。
 
+> **⚠️ 有些 GPU 机默认不暴露 GPU**（`torch.cuda.is_available()` 为 False，须显式 `CUDA_VISIBLE_DEVICES=<卡>` 才可见）。**且 agent 的自动测试机制（若它每次改完自动跑一条固定测试命令）的子进程未必继承你 shell 里 `export` 的环境变量**——所以**把 `CUDA_VISIBLE_DEVICES=<卡> CUDA_ARCHS=<架构>` 直接写进自测命令每条前缀**，别只靠 shell export，例如测试命令设为 `CUDA_VISIBLE_DEVICES=0 CUDA_ARCHS=80 python skill/scripts/verify_case.py --case <名> && CUDA_VISIBLE_DEVICES=0 CUDA_ARCHS=80 python skill/scripts/bench_case.py --case <名>`。
+
 > `framework/loader.py` 默认为 sm_75(T4) + sm_80(A100) 编译。其他架构用 `export CUDA_ARCHS="架构号"`（如 A100 用 `80`、H100 用 `90`）。
 
 ---
@@ -156,7 +158,10 @@ python skill/scripts/profile_case.py   --case <你的算法名>   # ④ 未达�
 ```
 
 - **达标线**：前向、反向各自 ≥1.05× `torch.compile`；擦线（1.05–1.10×）建议连跑 3 次都过。
+- **⚠️ 短核假象（务必看）**：若 `bench_case.py` 报的 baseline 前向或反向 **<1ms**，加速比被固定开销（kernel launch/同步）抬高、**不可信、不算达标**——`bench_case.py` 会打印"短核假象警告"提示你放大规模。**小 reduce / 归一化（LayerNorm/RMSNorm 类）/ 逐元素算子尤其易中招**：默认小规模常报虚高的"1.5×~1.9× PASS"，放大到计算主导区（baseline≥1ms）后常回落到 <1.05 甚至 <1（带宽墙）。**做法**：`config.py` 让规模支持 env 覆盖（如 `RMS_B`），用大规模复测——`RMS_B=262144 python skill/scripts/bench_case.py --case <名>`；再换 2× 规模看加速比稳不稳（真优势稳、短核假象掉）。**别拿默认小规模的高加速比当达标。**
 - **本征边界**：有些算法（纯访存前向、cuSOLVER/cuFFT 级厂商库前向）手写打不过是正常的——`SKILL.md` 的"识别本征边界"章节讲了何时该停、诚实报边界，别空转。
+
+> **agent 能否自主放大复测？** 有 shell 执行能力的 agent（能自己跑命令）可自主放大；但**纯 API 会话式 agent（只会跑一条固定的自动测试命令、不能自己改规模）**——这类要么把大规模写进那条测试命令（如让它跑 `RMS_B=262144 python skill/scripts/bench_case.py --case <名>`），要么你手动跑大规模命令、把输出贴回给 agent 判断（半自动）。
 
 ---
 

@@ -967,3 +967,18 @@ skill/harness 能保证的（诚实信号）与 agent 能力决定的（优化�
 **结论修正（已回写 CASE_EVIDENCE + SKILL 正文）**：**"低算术强度整行归一化反向也带宽墙"是过度概括**——反向能否赢**取决于 kernel 融合结构**：多梯度融进单 kernel 各只读一遍输入→访存减半真赢（1.9×），拆成多 kernel 各读一遍→撞墙（0.99）。§29 旧结论是拆分版的结论，非算子本征。**元教训**：带宽墙判定要分前/反向、分 kernel 结构，别按算子名一刀切；且 agent 自报的反超旧结论的数字，务必换规模实测核验真伪（这次是真、但流程上必须验）。
 
 **collected**：codex 版 LayerNorm（单 kernel 全融合反向）是"整行归一化反向靠融合翻带宽墙"的范例，优于开发仓 test_kt 的拆分版。端到端也验证了交付仓即装即用 + 净化无损。
+
+
+## 38. 端到端第 4 轮：aider 路径 B 实走 RMSNorm（暴露交付物短核假象漏洞 #11 + 宿主分层再现）
+
+aider 装在 A100（反向 SSH 隧道 `-R 8787` 把本地 LLM 代理透到 A100，实测隔隧道调 GPT-5.5 通）、走**路径 B**（agent 与卡同机、本机自测）做 RMSNorm。**流程走通但未达标**，产出：
+
+**① 交付仓即装即用 + skill 内化生效**：aider 从净化交付仓自主建 rmsnorm（守闸门、reference CLEAN、verify 5 种子 PASS），且 **config 主动写了 `RMS_B` env 覆盖 + 短核警告注释**（skill 短核认知已内化）。
+
+**② 暴露交付物短核假象漏洞（#11，最重要）**：aider 默认 B=1024 短核下 `bench_case.py` 报**前 1.51×/反 1.85× "PASS"**——但 baseline 前 0.065ms/反 0.183ms 都 <1ms。放大到 RMS_B=262144（计算主导区 baseline≥1ms）真实是 **前 0.91× FAIL / 反 1.05× 擦线**，2× 规模 524288 再掉 1.04× FAIL。**根因**：作者开发仓靠 `run_on_a100.sh` 的 auto-scale 兜底短核，该脚本净化剔除后，**交付仓 `bench_case.py` 无兜底 → 短核直接出虚高 PASS，通用用户被误导**。**修复**：给 `bench_case.py` 加通用短核自检（baseline<1ms 打印显著警告 + `--emit-verdict` 判 `SHORT_KERNEL_SUSPECT` + `--strict` 视为未达标）；USAGE/SKILL 达标判据补短核告诫（把原来引用 run_on_a100 auto-scale 的话改成通用 bench_case 自检）。
+
+**③ 宿主分层再现（codex > aider，归一化反向）**：codex LayerNorm 反向做出**单 kernel 全融合**翻带宽墙 1.9×（§37）；aider RMSNorm 反向停在**拆分两 kernel**、计算主导区仅 1.05→1.04 擦线（没融合），且大规模 dgamma_err 涨到 2.5e-2~4e-2（可疑）。同为整行归一化反向，实现力差异明确。
+
+**④ 暴露的其他毛刺（已记 E2E #12–#14）**：aider 自造 `inspect.signature(Case)` 反射构造漏 `params` 必填字段（#12，约定已补"照 rbf 直接 `Case(...)`"）；路径 B 的 auto-test 子进程不继承 `CUDA_VISIBLE_DEVICES`、且该机默认不暴露 GPU（#13，USAGE 补"写进 test-cmd 前缀"）；aider 纯 API 会话不能自主跑变规模命令 + GPT-5.5 优化阶段 `did not conform to edit format`→空响应卡住（#14，宿主局限，同 §30 GeGLU 的 `__tanhf` 耗尽；USAGE 补半自动说明）。
+
+**元教训**：**净化交付物时，被剥离的作者基建（run_on_a100 的 auto-scale）承载的"诚实性兜底"必须在通用工具（bench_case.py）里补回**——否则净化虽去了私有内容，却也去掉了防短核假象的护栏，让交付物在诚实性上退步。这是"净化无损"的边界：文档措辞无损，但基建承载的能力要显式移植。

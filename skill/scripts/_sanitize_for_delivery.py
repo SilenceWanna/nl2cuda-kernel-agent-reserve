@@ -82,12 +82,8 @@ LINE_RULES = [
     ("skill/SKILL.md",
      "命中则打印 WARN 供核查（有合法例外如变系数递推 T²，故只警告不拦）。`run_on_a100.sh` 每次自测前也会自动跑此预检并把 WARN 打进日志",
      "命中则打印 WARN 供核查（有合法例外如变系数递推 T²，故只警告不拦）。建议每次自测前先跑一遍此预检"),
-    ("skill/SKILL.md",
-     "`run_on_a100.sh` 会自动探测短核并放大规模重测（harness 兜底，无需你建 bench.env）**——所以务必让 config 参数化规模",
-     "自测时应**手动选一个计算主导区规模**（baseline ≥1ms）重测确认，别被短核规模的虚高加速比骗**——所以务必让 config 参数化规模"),
-    ("skill/SKILL.md",
-     "，是**规模挑选**。`run_on_a100.sh` 已自动检测：擦线 PASS+短核时自动 ×2/×4 复测，掉破 1.05 判 `VERDICT=PASS_SCALE_SUSPECT`（strict 下算未达标，逼你优化 kernel 本体而非挑规模）。**对策**：选规模让 baseline 进计算主导区（≥1ms）再优化；bench.env 声明的规模要经得起放大交叉验证。",
-     "，是**规模挑选**（不诚实）。**对策**：固定一个计算主导区规模（baseline ≥1ms）把 kernel 优化到达标；擦线 PASS 时自己换 ×2/×4 规模复测，若掉破 1.05 说明是短核固定开销虚高、非真达标，须优化 kernel 本体而非挑规模。"),
+    # 注：原 SKILL 达标判据"警惕短核假象"/"规模挑选"两条规则已随 #11 修复把该处正文改写为引用通用
+    # bench_case.py 短核自检（不再提 run_on_a100），故删除这两条规则（否则锚点未命中报 drift）。
     # ---- skill/loop.md ----
     ("skill/loop.md",
      "固定一个计算主导区规模（baseline ≥1ms）优化到达标。`run_on_a100.sh` 会对擦线 PASS+短核自动 ×2/×4 复测，掉破 1.05 判 `PASS_SCALE_SUSPECT`（strict 下未达标）——挑更大规模也过不了，只能真优化。见 SKILL.md 达标判据\"规模挑选\"。—— 实测：GroupNorm gptme 挑 GN_N=384(baseline 前0.92ms)前向擦线1.07，放大768/1536 掉1.048/1.035 被拆穿。",

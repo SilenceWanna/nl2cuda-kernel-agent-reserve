@@ -109,25 +109,25 @@
 - **根因**：作者开发仓靠 `run_on_a100.sh` 的 auto-scale（探到短核自动放大到计算主导区重测 + 规模敏感复测判 `PASS_SCALE_SUSPECT`）兜底；但该脚本是作者专用、已从交付物净化剔除。**交付仓的 `bench_case.py` 没有这个兜底**，短核直接出虚高 PASS。诚实性（项目核心）在通用交付物上失守。
 - **期望**（择一或组合）：① `bench_case.py` 加**短核自检**——baseline 前/反向 <1ms 时打印显著警告"短核假象，加速比不可信，请放大规模（如设 <SIZE_ENV>=…）到 baseline≥1ms 复测"，甚至默认拒绝在短核上判 PASS；② USAGE 步骤明确"小 reduce/归一化/逐元素类务必放大到 baseline≥1ms 复测，默认短规模的高加速比不算数"；③ 把 auto-scale 的**通用版**（不含作者 SSH/远程）移植进 `bench_case.py`。**注意**：③ 最治本但工作量大；①+② 最快堵住误导。
 - **范围**：`skill/scripts/bench_case.py`（核心）、`USAGE.md`、`skill/SKILL.md` 达标判据（短核假象告诫需在交付物正文，不只在被剥离的 CASE_EVIDENCE）。
-- **状态**：🔴 待解决（**优先级最高**——直接关乎交付物的诚实性/达标判据可信度）。
+- **状态**：✅ **已解决（2026-08-01）**：`bench_case.py` 加通用短核自检——`_baseline_ms()` 解析 baseline 前/反向耗时，<1ms 时 `main` 打印显著"短核假象警告"（含从 config 探测的放大 env 提示如 `RMS_B=262144`）、`--emit-verdict` 判 `VERDICT=SHORT_KERNEL_SUSPECT`、`--strict` 视为未达标；SKILL 达标判据"警惕短核假象"/"规模挑选"改成引用通用 bench_case 自检（不再提 run_on_a100）；USAGE 步骤 3 补短核假象告诫 + 放大复测做法。A100 实测：rmsnorm 短核 B=1024 报 fwd1.59/bwd2.61 但紧跟警告 + `SHORT_KERNEL_SUSPECT`，不再是裸虚假 PASS。**净化剥离 run_on_a100 auto-scale 丢的诚实性护栏已用通用工具补回。**
 
 ### #12　agent 自造 Case 反射构造、漏必填字段 🔴
 - **现象**：aider 的 `cases/rmsnorm/__init__.py` 没照 rbf 样例直接 `Case(...)`，而是自造 `inspect.signature(Case)` 反射构造 + 字段白名单，白名单漏了 `params`/`grad_inputs`/`dtype`，遍历到必填的 `params` 时抛 `TypeError: unsupported required field 'params'`，卡了 3 轮 auto-test reflection。
 - **期望**：`CONVENTIONS.md`/`SKILL.md` 的建 case 指引更强调"**`__init__.py` 直接照 `cases/rbf/__init__.py` 用 `Case(...)` 显式传全部 7 个字段，不要自造反射/校验构造**"。防宿主（尤其 aider）把简单实例化做成过度工程。
 - **范围**：`AGENTS.md`/`CLAUDE.md`/`CONVENTIONS.md`/`skill/SKILL.md` 的 Case 协议章节。
-- **状态**：🔴 待解决（宿主实现风格问题，skill 措辞可缓解）。
+- **状态**：✅ **已解决（2026-08-01）**：`AGENTS.md`/`CLAUDE.md`/`CONVENTIONS.md` 的建 case 指引均加"**`__init__.py` 直接照 `cases/rbf/__init__.py` 用 `Case(...)` 显式传全部字段，别用 inspect 反射/白名单自造构造漏必填字段**"，并点名实测的 `unsupported required field 'params'`。
 
 ### #13　路径 B：aider `--auto-test` 的 test-cmd 子进程不继承 `CUDA_VISIBLE_DEVICES` 🔴
 - **现象**：环境里 `export CUDA_VISIBLE_DEVICES=6` 后启动 aider，但它 auto-test 跑 test-cmd 时子进程没继承，verify 报 `需要 CUDA GPU。本地无 GPU`（这台 A100 默认不暴露 GPU，须显式 `CUDA_VISIBLE_DEVICES` 才 `torch.cuda.is_available()=True`）。把 `CUDA_VISIBLE_DEVICES=6 CUDA_ARCHS=80` 写进 test-cmd 每条命令前缀才解决。
 - **期望**：USAGE 路径 B 明确"自测命令里显式带 `CUDA_VISIBLE_DEVICES=<卡> CUDA_ARCHS=<架构>` 前缀，别只依赖 shell export（agent 的 test 子进程可能不继承）"。
 - **范围**：`USAGE.md` 路径 B。
-- **状态**：🔴 待解决。
+- **状态**：✅ **已解决（2026-08-01）**：USAGE 路径 B 补 blockquote——"有些 GPU 机默认不暴露 GPU（须显式 `CUDA_VISIBLE_DEVICES`），且 agent 自动测试机制的子进程未必继承 shell export，**把 `CUDA_VISIBLE_DEVICES=<卡> CUDA_ARCHS=<架构>` 直接写进自测命令每条前缀**"，附完整示例。
 
 ### #14　纯 API 会话的 agent 无 shell 工具 → 放大复测/多步优化走不通 + edit-format 脆弱 🔴
 - **现象**：aider 是纯 LLM 会话（`--auto-test` 由 aider 客户端代跑固定 test-cmd），agent **自己不能主动发起**带 `RMS_B=262144` 的大规模复测命令——只会被动等那条固定 test-cmd。要放大只能改 test-cmd 重启或外部跑。且优化阶段 aider(GPT-5.5 经代理)反复 `did not conform to the edit format`（输出代码块没带文件名）→ 最终 `Empty response received`，没能落盘反向融合优化，卡住。
 - **期望**：① USAGE 说明"若 agent 不能自主跑变规模命令，用户需把大规模复测命令喂给它、或把 auto-scale 逻辑放进 bench（同 #11③）"；② 记录 aider+GPT-5.5 的 edit-format 脆弱性为已知宿主局限（非 skill 问题，§30 GeGLU 也遇到过），复杂多文件优化时该宿主易卡。
 - **范围**：`USAGE.md`（半自动场景说明）+ 宿主局限记录（本文件/矩阵）。
-- **状态**：🔴 待解决（部分是宿主局限、非 skill 可修；#11③ 的 auto-scale 入 bench 能顺带缓解放大复测走不通）。
+- **状态**：✅ **已解决（2026-08-01，部分是宿主局限）**：USAGE 步骤 3 补 blockquote"有 shell 能力的 agent 可自主放大；纯 API 会话 agent 只跑固定测试命令、不能自己改规模——把大规模写进测试命令，或手动跑大规模贴回（半自动）"。edit-format 脆弱性记入矩阵 §38（宿主局限，非 skill 可修，同 §30 GeGLU）。放大复测走不通已被 #11 的 bench 短核自检缓解（用户/agent 据警告放大即可）。
 
 ---
 
