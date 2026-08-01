@@ -23,6 +23,7 @@
 - **第 1 轮（2026-07-30，首次评审 USAGE.md 初稿）**：用户通读 USAGE.md 初稿，提出 6 个问题（下方 #1–#6）。尚未真正跑端到端，属"说明书评审"阶段暴露的问题。
 - **第 2 轮（2026-07-31，用户亲自按交付仓 USAGE 实走路径 C）**：用户本地 Windows 无 GPU、经跳板机双跳连远程 A100，按路径 C 配置时暴露 3 个问题（下方 #7–#9）。属真正实走阶段的问题（前置：预跑已确认交付仓 rbf 在 A100 即装即用 verify/bench 全 PASS）。
 - **第 3 轮（2026-07-31，准备 aider+gptme 端到端测试时厘清路径 A/B/C 执行模型）**：确定 gptme 走路径 A（半自动）、aider 在 A100 上装走路径 B。厘清中发现路径 A 对本地 CLI agent 只能半自动（#10）。
+- **第 4 轮（2026-08-01，aider 路径 B 实走 RMSNorm 端到端）**：aider 装在 A100 上（反向 SSH 隧道把本地 LLM 代理透到 A100）、走路径 B 做 RMSNorm。走通流程但**未达标**（计算主导区前 0.91× 带宽墙 / 反 1.05→1.04× 擦线放大即掉），且暴露 4 个问题（#11–#14）。真实产出：确认交付仓即装即用 + skill 内化生效（aider 主动写 RMS_B 短核警告），但也暴露**交付仓无短核兜底致假 PASS**（#11，最重要）。宿主分层再现：codex LayerNorm 反向做出单 kernel 全融合翻墙 1.9×，aider RMSNorm 反向停在拆分版擦线。
 
 ---
 
@@ -102,6 +103,31 @@
 - **期望**：USAGE 路径 A 明确两种子形态并给流程——**A-1 半自动**（本地 agent 产码 + 用户中转 Colab 跑 + 回贴，本地 CLI agent 的现实路径）；**A-2 全自动**（agent 本身运行在 Colab 环境内，如 Colab terminal 里驱动，才能自主摸 GPU）。并点明"agent 全自主自测需要 agent 与 GPU 同环境（路径 B 本机有卡 / 路径 C SSH 到有卡机 / 路径 A-2 agent 在 Colab 内）；本地 agent + Colab 只能半自动"。
 - **范围**：`USAGE.md` 路径 A、步骤 3（自主自测的前提）。
 - **状态**：🔴 待解决（第 3 轮记录，先记后修——本轮先做 aider/gptme 端到端，问题攒一起改）。
+
+### #11　交付仓无 auto-scale 兜底 → 短核假象骗过 PASS（第 4 轮，最重要）🔴
+- **现象**：aider RMSNorm 默认 B=1024 短核，`bench_case.py` 报**前 1.51×/反 1.85× "PASS"**——但 baseline 前 0.065ms/反 0.183ms 都 <1ms，是固定开销抬高的**短核假象**。放大到计算主导区 RMS_B=262144（baseline≥1ms）真实是**前 0.91× FAIL / 反 1.05× 擦线**，2× 规模再掉到 1.04× FAIL。通用用户若只看默认输出，会被"1.85× PASS"误导，以为达标。
+- **根因**：作者开发仓靠 `run_on_a100.sh` 的 auto-scale（探到短核自动放大到计算主导区重测 + 规模敏感复测判 `PASS_SCALE_SUSPECT`）兜底；但该脚本是作者专用、已从交付物净化剔除。**交付仓的 `bench_case.py` 没有这个兜底**，短核直接出虚高 PASS。诚实性（项目核心）在通用交付物上失守。
+- **期望**（择一或组合）：① `bench_case.py` 加**短核自检**——baseline 前/反向 <1ms 时打印显著警告"短核假象，加速比不可信，请放大规模（如设 <SIZE_ENV>=…）到 baseline≥1ms 复测"，甚至默认拒绝在短核上判 PASS；② USAGE 步骤明确"小 reduce/归一化/逐元素类务必放大到 baseline≥1ms 复测，默认短规模的高加速比不算数"；③ 把 auto-scale 的**通用版**（不含作者 SSH/远程）移植进 `bench_case.py`。**注意**：③ 最治本但工作量大；①+② 最快堵住误导。
+- **范围**：`skill/scripts/bench_case.py`（核心）、`USAGE.md`、`skill/SKILL.md` 达标判据（短核假象告诫需在交付物正文，不只在被剥离的 CASE_EVIDENCE）。
+- **状态**：🔴 待解决（**优先级最高**——直接关乎交付物的诚实性/达标判据可信度）。
+
+### #12　agent 自造 Case 反射构造、漏必填字段 🔴
+- **现象**：aider 的 `cases/rmsnorm/__init__.py` 没照 rbf 样例直接 `Case(...)`，而是自造 `inspect.signature(Case)` 反射构造 + 字段白名单，白名单漏了 `params`/`grad_inputs`/`dtype`，遍历到必填的 `params` 时抛 `TypeError: unsupported required field 'params'`，卡了 3 轮 auto-test reflection。
+- **期望**：`CONVENTIONS.md`/`SKILL.md` 的建 case 指引更强调"**`__init__.py` 直接照 `cases/rbf/__init__.py` 用 `Case(...)` 显式传全部 7 个字段，不要自造反射/校验构造**"。防宿主（尤其 aider）把简单实例化做成过度工程。
+- **范围**：`AGENTS.md`/`CLAUDE.md`/`CONVENTIONS.md`/`skill/SKILL.md` 的 Case 协议章节。
+- **状态**：🔴 待解决（宿主实现风格问题，skill 措辞可缓解）。
+
+### #13　路径 B：aider `--auto-test` 的 test-cmd 子进程不继承 `CUDA_VISIBLE_DEVICES` 🔴
+- **现象**：环境里 `export CUDA_VISIBLE_DEVICES=6` 后启动 aider，但它 auto-test 跑 test-cmd 时子进程没继承，verify 报 `需要 CUDA GPU。本地无 GPU`（这台 A100 默认不暴露 GPU，须显式 `CUDA_VISIBLE_DEVICES` 才 `torch.cuda.is_available()=True`）。把 `CUDA_VISIBLE_DEVICES=6 CUDA_ARCHS=80` 写进 test-cmd 每条命令前缀才解决。
+- **期望**：USAGE 路径 B 明确"自测命令里显式带 `CUDA_VISIBLE_DEVICES=<卡> CUDA_ARCHS=<架构>` 前缀，别只依赖 shell export（agent 的 test 子进程可能不继承）"。
+- **范围**：`USAGE.md` 路径 B。
+- **状态**：🔴 待解决。
+
+### #14　纯 API 会话的 agent 无 shell 工具 → 放大复测/多步优化走不通 + edit-format 脆弱 🔴
+- **现象**：aider 是纯 LLM 会话（`--auto-test` 由 aider 客户端代跑固定 test-cmd），agent **自己不能主动发起**带 `RMS_B=262144` 的大规模复测命令——只会被动等那条固定 test-cmd。要放大只能改 test-cmd 重启或外部跑。且优化阶段 aider(GPT-5.5 经代理)反复 `did not conform to the edit format`（输出代码块没带文件名）→ 最终 `Empty response received`，没能落盘反向融合优化，卡住。
+- **期望**：① USAGE 说明"若 agent 不能自主跑变规模命令，用户需把大规模复测命令喂给它、或把 auto-scale 逻辑放进 bench（同 #11③）"；② 记录 aider+GPT-5.5 的 edit-format 脆弱性为已知宿主局限（非 skill 问题，§30 GeGLU 也遇到过），复杂多文件优化时该宿主易卡。
+- **范围**：`USAGE.md`（半自动场景说明）+ 宿主局限记录（本文件/矩阵）。
+- **状态**：🔴 待解决（部分是宿主局限、非 skill 可修；#11③ 的 auto-scale 入 bench 能顺带缓解放大复测走不通）。
 
 ---
 
