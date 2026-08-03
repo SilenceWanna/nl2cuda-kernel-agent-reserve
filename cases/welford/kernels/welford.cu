@@ -256,6 +256,88 @@ __global__ void welford_forward_kernel(
     }
 }
 
+// 单 kernel 全融合反向（D=1024 快路径）：一 block 管 kRowsPerBlock 行，grad_output/X 各只读一遍，
+// 同 kernel 内算 dX 写出 + 累积该列的 dgamma/dbeta 行贡献，block 末一次性 atomicAdd 到全局。
+// 相比拆分版（backward_x + backward_param 各读一遍 grad/X）访存减半——仿 layernorm 单 kernel 全融合翻带宽墙。
+constexpr int kRowsPerBlock = 32;
+
+__global__ void welford_backward_fused_1024_kernel(
+    const float* __restrict__ grad_output,
+    const float* __restrict__ X,
+    const float* __restrict__ gamma,
+    const float* __restrict__ mean,
+    const float* __restrict__ rstd,
+    float* __restrict__ grad_X,
+    float* __restrict__ grad_gamma,
+    float* __restrict__ grad_beta,
+    int rows) {
+    const int row_start = blockIdx.x * kRowsPerBlock;
+    const int tid = threadIdx.x;                    // 0..255，各持一列 float4（256*4=1024）
+    const float4 gamma_value = reinterpret_cast<const float4*>(gamma)[tid];
+    float4 gamma_acc = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+    float4 beta_acc = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+
+    for (int r = 0; r < kRowsPerBlock; ++r) {
+        const int row = row_start + r;
+        float sum_dxhat = 0.0f;
+        float sum_dxhat_xhat = 0.0f;
+        float4 x_value = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+        float4 grad_value = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+        float row_mean = 0.0f, row_rstd = 0.0f;
+        if (row < rows) {
+            const std::int64_t off = static_cast<std::int64_t>(row) * kFastD;
+            x_value = reinterpret_cast<const float4*>(X + off)[tid];
+            grad_value = reinterpret_cast<const float4*>(grad_output + off)[tid];
+            row_mean = mean[row];
+            row_rstd = rstd[row];
+        }
+        const float xhat0 = (x_value.x - row_mean) * row_rstd;
+        const float xhat1 = (x_value.y - row_mean) * row_rstd;
+        const float xhat2 = (x_value.z - row_mean) * row_rstd;
+        const float xhat3 = (x_value.w - row_mean) * row_rstd;
+        const float dxhat0 = grad_value.x * gamma_value.x;
+        const float dxhat1 = grad_value.y * gamma_value.y;
+        const float dxhat2 = grad_value.z * gamma_value.z;
+        const float dxhat3 = grad_value.w * gamma_value.w;
+        // 行内两个规约量（整个 block 参与，含越界行的 0 贡献不影响）
+        float sd = dxhat0 + dxhat1 + dxhat2 + dxhat3;
+        float sdx = dxhat0 * xhat0 + dxhat1 * xhat1 + dxhat2 * xhat2 + dxhat3 * xhat3;
+        sum_dxhat = block_reduce_sum(sd);
+        sum_dxhat_xhat = block_reduce_sum(sdx);
+        if (row < rows) {
+            const float inv_D = 1.0f / static_cast<float>(kFastD);
+            const float mean_dxhat = sum_dxhat * inv_D;
+            const float mean_dxhat_xhat = sum_dxhat_xhat * inv_D;
+            float4 dx;
+            dx.x = row_rstd * (dxhat0 - mean_dxhat - xhat0 * mean_dxhat_xhat);
+            dx.y = row_rstd * (dxhat1 - mean_dxhat - xhat1 * mean_dxhat_xhat);
+            dx.z = row_rstd * (dxhat2 - mean_dxhat - xhat2 * mean_dxhat_xhat);
+            dx.w = row_rstd * (dxhat3 - mean_dxhat - xhat3 * mean_dxhat_xhat);
+            const std::int64_t off = static_cast<std::int64_t>(row) * kFastD;
+            reinterpret_cast<float4*>(grad_X + off)[tid] = dx;
+            // 累积该列 dgamma=Σ grad·xhat、dbeta=Σ grad（跨本 block 管的行）
+            gamma_acc.x += grad_value.x * xhat0;
+            gamma_acc.y += grad_value.y * xhat1;
+            gamma_acc.z += grad_value.z * xhat2;
+            gamma_acc.w += grad_value.w * xhat3;
+            beta_acc.x += grad_value.x;
+            beta_acc.y += grad_value.y;
+            beta_acc.z += grad_value.z;
+            beta_acc.w += grad_value.w;
+        }
+    }
+    float4* dg4 = reinterpret_cast<float4*>(grad_gamma);
+    float4* db4 = reinterpret_cast<float4*>(grad_beta);
+    atomicAdd(&dg4[tid].x, gamma_acc.x);
+    atomicAdd(&dg4[tid].y, gamma_acc.y);
+    atomicAdd(&dg4[tid].z, gamma_acc.z);
+    atomicAdd(&dg4[tid].w, gamma_acc.w);
+    atomicAdd(&db4[tid].x, beta_acc.x);
+    atomicAdd(&db4[tid].y, beta_acc.y);
+    atomicAdd(&db4[tid].z, beta_acc.z);
+    atomicAdd(&db4[tid].w, beta_acc.w);
+}
+
 __global__ void welford_backward_x_1024_kernel(
     const float* __restrict__ grad_output,
     const float* __restrict__ X,
@@ -491,16 +573,21 @@ std::vector<torch::Tensor> welford_backward(
     }
 
     if (D == kFastD) {
-        welford_backward_x_1024_kernel<<<rows, kThreads, 0, stream>>>(
+        // 单 kernel 全融合：dX + dgamma/dbeta 一遍读 grad/X 算完，省拆分版的第二遍读（访存减半）。
+        const int fused_blocks = (rows + kRowsPerBlock - 1) / kRowsPerBlock;
+        welford_backward_fused_1024_kernel<<<fused_blocks, kThreads, 0, stream>>>(
             grad_output.data_ptr<float>(), X.data_ptr<float>(), gamma.data_ptr<float>(),
             mean.data_ptr<float>(), rstd.data_ptr<float>(), grad_X.data_ptr<float>(),
-            rows);
-    } else {
-        welford_backward_x_kernel<<<rows, kThreads, 0, stream>>>(
-            grad_output.data_ptr<float>(), X.data_ptr<float>(), gamma.data_ptr<float>(),
-            mean.data_ptr<float>(), rstd.data_ptr<float>(), grad_X.data_ptr<float>(),
-            rows, D);
+            grad_gamma.data_ptr<float>(), grad_beta.data_ptr<float>(), rows);
+        C10_CUDA_KERNEL_LAUNCH_CHECK();
+        return {grad_X, grad_gamma, grad_beta};
     }
+
+    // 通用路径 D≠1024：保留拆分版（dX kernel + param kernel）。
+    welford_backward_x_kernel<<<rows, kThreads, 0, stream>>>(
+        grad_output.data_ptr<float>(), X.data_ptr<float>(), gamma.data_ptr<float>(),
+        mean.data_ptr<float>(), rstd.data_ptr<float>(), grad_X.data_ptr<float>(),
+        rows, D);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 
     const dim3 param_grid(

@@ -1005,3 +1005,28 @@ gptme 走**路径 A 半自动**（WSL 产码不自测 → base64 打包 → Cola
 **④ 路径 A 半自动体验（E2E #10/#15）**：半自动搬运（base64 打包→Colab 解包）可行但繁琐；Colab 运行时中途重置一次致 clone 仓库+解包 case 全丢、需重建（#15）。半自动确认了"本地 CLI agent + Colab 只能人工中转、agent 不自主自测"（#10）——路径 A 对本地 agent 的固有限制。
 
 **collected**：gptme RMSNorm **不收录**（性能负优化，无收录价值）；三宿主对照结论记录在案。本轮价值在**跑通半自动流程 + 补齐三宿主实现力分层的完整证据链**，非产出可用 kernel。
+
+
+## 40. 阶段 11.1：带宽墙突破复盘——整行归一化家族反向"融合翻墙"是普遍规律（推翻"暂存疑"）
+
+§37 发现 codex LayerNorm 反向单 kernel 全融合翻带宽墙（1.9×）后，遗留"welford/temperature_softmax 反向未做同款复验、暂存疑"。本阶段系统重审这批"曾判带宽墙/擦线"的整行归一化家族反向。
+
+**① 复审对象结构分析**（先查再测，避免瞎改）：
+- **welford**（grad_inputs=X/gamma/beta，三梯度）：反向**拆分两 kernel**（backward_x + backward_param，grad/X 各读一遍=共两遍）——与 codex 翻墙前的 LayerNorm **完全同构**，是主攻目标。
+- **l2norm_scale**（X/g 两梯度）：反向已是 `l2n_backward_fused_kernel` 单 kernel 全融合（§27 攻坚时做的）——已翻墙，复核即可。
+- **temperature_softmax**（scores 单梯度）：无多梯度可融合，单 kernel 单输出——排除出"融合"攻坚。
+
+**② 计算主导区实测基线（A100，baseline 均 ≫1ms 非短核）——三 case 反向本就都已达标**：
+| case | 前向 | 反向(改前) | 反向结构 |
+|------|------|-----------|----------|
+| welford | 1.01×(带宽墙) | 1.20× | 拆分两 kernel |
+| temperature_softmax | 1.01×(带宽墙) | **1.64×** | 单 kernel 单梯度 |
+| l2norm_scale | 1.02×(带宽墙) | **1.60×** | 已融合单 kernel |
+
+**关键：三者反向计算主导区实测都 >1.05**——**§37 的"暂存疑"是多虑**，它们反向本就不是带宽墙（旧"归一化反向也带宽墙"是短核假象误判，同 LayerNorm）。
+
+**③ welford 融合重构验证"手法可复制"**：把 welford 的 D=1024 反向从拆分两 kernel 重构成 `welford_backward_fused_1024_kernel`（一 block 管 kRowsPerBlock=32 行、grad/X 各只读一遍、行内算 dX 写出 + 跨行累积 dgamma/dbeta、block 末 atomicAdd），完全仿 codex LayerNorm 融合版。实测 **反向 1.20×→1.92×（2× 规模 1.94× 稳），5 种子 verify 全 PASS，前向仍 1.01× 带宽墙不动**。**证明"拆分→单 kernel 全融合翻墙"是可复制的通用手法，非 codex 偶然**——同构算子同手法同幅度（LayerNorm 1.9× / welford 1.92×）。
+
+**④ 结论（已回写 CASE_EVIDENCE）**：**小 reduce 归一化家族的普遍规律 = 前向带宽墙（本征，不分宿主）+ 反向靠单 kernel 全融合可翻墙（1.6~1.9×）**。带宽墙判定必须分前/反向、分融合结构——"归一化反向也带宽墙"是拆分版+短核的双重误判，被系统性推翻。
+
+**collected**：welford 融合反向收进主仓 `cases/welford/`（D=1024 快路径单 kernel 全融合，反 1.20→1.92×；通用路径 D≠1024 保留拆分版）。check_reference CLEAN（`for r<kRowsPerBlock` 小常量 tile 白名单不误报）。temperature_softmax/l2norm_scale 反向已达标、结构已最优，不改。
