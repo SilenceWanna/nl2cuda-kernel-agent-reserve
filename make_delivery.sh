@@ -98,6 +98,30 @@ if new != txt:
 PYEOF
     done
 
+# ---- 清 notebook 里引用交付仓不存在 case 的 cell（E2E #16）----
+#      开发仓 run.ipynb 含 rbf + layernorm 两个 case 的演示 cell；交付仓只保留 rbf 样例，
+#      layernorm cell 会指向不存在的 cases.layernorm → ModuleNotFoundError。删掉这些 cell（及其前导
+#      markdown 说明），只留 rbf 冒烟。开发仓 notebook 不动（作者环境有 layernorm）。
+if [ -f "$DEST/notebooks/run.ipynb" ]; then
+  python - "$DEST/notebooks/run.ipynb" <<'PYEOF'
+import json, sys, re
+path = sys.argv[1]
+nb = json.load(open(path, encoding="utf-8"))
+kept = []
+for c in nb.get("cells", []):
+    src = "".join(c.get("source", []))
+    # 删：引用非 rbf case 的 code cell（--case layernorm 等）+ 其"性能测试…LayerNorm case"前导 markdown
+    is_nonrbf_code = c.get("cell_type") == "code" and re.search(r"--case\s+(?!rbf\b)[a-z_]+", src)
+    is_layernorm_md = c.get("cell_type") == "markdown" and ("layernorm" in src.lower() or "LayerNorm" in src)
+    if is_nonrbf_code or is_layernorm_md:
+        continue
+    kept.append(c)
+nb["cells"] = kept
+json.dump(nb, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+print(f"[notebook] 交付仓 run.ipynb 保留 {len(kept)} cell（删非 rbf case 引用）")
+PYEOF
+fi
+
 # ---- 净化：把交付副本里方法论/约定文件的作者私有自测内容(run_on_a100/双跳SSH等)洗成通用 verify/bench ----
 #      主仓正文保持原样(=作者开发/测试仓)，只改目标目录副本。规则失效(drift)或有残留会 exit 1。
 if ! PYTHONIOENCODING=utf-8 PYTHONUTF8=1 python "$SRC/skill/scripts/_sanitize_for_delivery.py" "$DEST"; then

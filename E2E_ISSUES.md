@@ -25,6 +25,7 @@
 - **第 3 轮（2026-07-31，准备 aider+gptme 端到端测试时厘清路径 A/B/C 执行模型）**：确定 gptme 走路径 A（半自动）、aider 在 A100 上装走路径 B。厘清中发现路径 A 对本地 CLI agent 只能半自动（#10）。
 - **第 4 轮（2026-08-01，aider 路径 B 实走 RMSNorm 端到端）**：aider 装在 A100 上（反向 SSH 隧道把本地 LLM 代理透到 A100）、走路径 B 做 RMSNorm。走通流程但**未达标**（计算主导区前 0.91× 带宽墙 / 反 1.05→1.04× 擦线放大即掉），且暴露 4 个问题（#11–#14）。真实产出：确认交付仓即装即用 + skill 内化生效（aider 主动写 RMS_B 短核警告），但也暴露**交付仓无短核兜底致假 PASS**（#11，最重要）。宿主分层再现：codex LayerNorm 反向做出单 kernel 全融合翻墙 1.9×，aider RMSNorm 反向停在拆分版擦线。
 - **第 5 轮（2026-08-03，gptme 路径 A 半自动实走 RMSNorm）**：gptme 在 WSL 产码（只产不测，本机无 GPU）→ base64 打包 → Colab(T4) 解包跑 verify/bench。**首次跑通路径 A 半自动全流程**。gptme 产物正确性 PASS（含 #12 修复生效：`__init__.py` 直接 `Case(...)` 不再反射自造；dgamma 大规模 ~5e-4 精度优于 aider），但性能 FAIL（计算主导区 baseline 9.4/13.7ms 非短核，前 1.00× 带宽墙 / **反 0.29× 严重负优化**）。暴露 #15（Colab 运行时重置坑）。**三宿主同类归一化反向对照就此完整**（见矩阵 §39）。
+- **第 6 轮（2026-08-03，用户 Colab 走 notebook 冒烟）**：用户在 Colab 打开交付仓 `notebooks/run.ipynb`，前几个 cell 正常，跑到"## 6. LayerNorm case"节报 `ModuleNotFoundError: No module named 'cases.layernorm'`。暴露 #16（notebook 引用交付仓不存在的 layernorm case）。
 
 ---
 
@@ -135,6 +136,13 @@
 - **期望**：USAGE 路径 A 提醒"Colab 闲置约 90 分钟/断网会重置运行时，clone 的仓库和上传的 case 都会丢；半自动流程里 agent 产码与 Colab 跑之间若隔较久，回到 Colab 先确认 `!pwd && ls cases/`，仓库没了就重跑开头 clone+cd cell 再重新解包"。也可提示把 case 解包命令固定成 notebook 里一个可重跑 cell。
 - **范围**：`USAGE.md` 路径 A（半自动子流程）。
 - **状态**：✅ **已解决（2026-08-03）**：USAGE 路径 A 补 blockquote"Colab 运行时闲置~90min/断网会重置，clone 仓库+上传解包的 case+已编译 kernel 全丢；回到 Colab 报找不到文件先 `!pwd && ls cases/` 确认，仓库没了重跑 clone+cd 单元恢复再重放 case"。
+
+### #16　交付仓 notebook 引用不存在的 layernorm case → ModuleNotFoundError 🔴
+- **现象**：用户 Colab 打开交付仓 `notebooks/run.ipynb` 从上到下跑，rbf 的 verify/bench（cell 8/10）正常，跑到"## 6. 性能测试…LayerNorm case"（cell 11-12 的 `verify_case.py --case layernorm`）报 `ModuleNotFoundError: No module named 'cases.layernorm'`。
+- **根因**：notebook 是开发仓给作者用的，含 rbf + layernorm 两个 case 的 cell；但交付仓净化只保留 `cases/rbf` 样例（make_delivery 清单），**layernorm 没进交付仓，notebook 那两个 layernorm cell 就指向不存在的 case**。同 #7（URL 旧名）一类——交付物文件（notebook）内容没适配"交付仓只有 rbf"的事实，净化盲区。
+- **期望**：make_delivery 净化阶段**删掉交付仓 notebook 的 layernorm 那节 cell**（cell 11-12 + 对应 markdown），只留 rbf 冒烟。开发仓 notebook 保留原样（作者环境有 layernorm 能跑）。"skill 通用性"由用户自建新 case 验，不该在 notebook 预设一个交付仓没有的 case。
+- **范围**：`make_delivery.sh` 净化步（新增 notebook 处理）、交付仓 `notebooks/run.ipynb`。
+- **状态**：✅ **已解决（2026-08-03）**：make_delivery 净化阶段新增 notebook 清理——删交付仓 `run.ipynb` 里引用非 rbf case 的 code cell（`--case layernorm` 等）及其 LayerNorm 前导 markdown，只留 rbf 冒烟（11 cell、仅 `case rbf`）。开发仓 notebook 不动。重推交付仓（b361079）验证：notebook 无 layernorm 引用、仅 rbf。
 
 ---
 
