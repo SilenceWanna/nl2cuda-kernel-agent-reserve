@@ -24,6 +24,7 @@
 - **第 2 轮（2026-07-31，用户亲自按交付仓 USAGE 实走路径 C）**：用户本地 Windows 无 GPU、经跳板机双跳连远程 A100，按路径 C 配置时暴露 3 个问题（下方 #7–#9）。属真正实走阶段的问题（前置：预跑已确认交付仓 rbf 在 A100 即装即用 verify/bench 全 PASS）。
 - **第 3 轮（2026-07-31，准备 aider+gptme 端到端测试时厘清路径 A/B/C 执行模型）**：确定 gptme 走路径 A（半自动）、aider 在 A100 上装走路径 B。厘清中发现路径 A 对本地 CLI agent 只能半自动（#10）。
 - **第 4 轮（2026-08-01，aider 路径 B 实走 RMSNorm 端到端）**：aider 装在 A100 上（反向 SSH 隧道把本地 LLM 代理透到 A100）、走路径 B 做 RMSNorm。走通流程但**未达标**（计算主导区前 0.91× 带宽墙 / 反 1.05→1.04× 擦线放大即掉），且暴露 4 个问题（#11–#14）。真实产出：确认交付仓即装即用 + skill 内化生效（aider 主动写 RMS_B 短核警告），但也暴露**交付仓无短核兜底致假 PASS**（#11，最重要）。宿主分层再现：codex LayerNorm 反向做出单 kernel 全融合翻墙 1.9×，aider RMSNorm 反向停在拆分版擦线。
+- **第 5 轮（2026-08-03，gptme 路径 A 半自动实走 RMSNorm）**：gptme 在 WSL 产码（只产不测，本机无 GPU）→ base64 打包 → Colab(T4) 解包跑 verify/bench。**首次跑通路径 A 半自动全流程**。gptme 产物正确性 PASS（含 #12 修复生效：`__init__.py` 直接 `Case(...)` 不再反射自造；dgamma 大规模 ~5e-4 精度优于 aider），但性能 FAIL（计算主导区 baseline 9.4/13.7ms 非短核，前 1.00× 带宽墙 / **反 0.29× 严重负优化**）。暴露 #15（Colab 运行时重置坑）。**三宿主同类归一化反向对照就此完整**（见矩阵 §39）。
 
 ---
 
@@ -128,6 +129,12 @@
 - **期望**：① USAGE 说明"若 agent 不能自主跑变规模命令，用户需把大规模复测命令喂给它、或把 auto-scale 逻辑放进 bench（同 #11③）"；② 记录 aider+GPT-5.5 的 edit-format 脆弱性为已知宿主局限（非 skill 问题，§30 GeGLU 也遇到过），复杂多文件优化时该宿主易卡。
 - **范围**：`USAGE.md`（半自动场景说明）+ 宿主局限记录（本文件/矩阵）。
 - **状态**：✅ **已解决（2026-08-01，部分是宿主局限）**：USAGE 步骤 3 补 blockquote"有 shell 能力的 agent 可自主放大；纯 API 会话 agent 只跑固定测试命令、不能自己改规模——把大规模写进测试命令，或手动跑大规模贴回（半自动）"。edit-format 脆弱性记入矩阵 §38（宿主局限，非 skill 可修，同 §30 GeGLU）。放大复测走不通已被 #11 的 bench 短核自检缓解（用户/agent 据警告放大即可）。
+
+### #15　路径 A 半自动：Colab 运行时闲置/重连会重置，clone 的仓库 + 解包的 case 全丢 🔴
+- **现象**：gptme 路径 A 半自动测试中，Colab 运行时中途重置了一次——重连后 `git clone` 的仓库整个丢失，只剩解包出的孤立 `cases/rmsnorm`（且落在 `/content/cases` 而非仓库内），`verify_case.py` 找不到。得重新 `git clone` + `%cd` + 重贴解包 cell 才恢复。
+- **期望**：USAGE 路径 A 提醒"Colab 闲置约 90 分钟/断网会重置运行时，clone 的仓库和上传的 case 都会丢；半自动流程里 agent 产码与 Colab 跑之间若隔较久，回到 Colab 先确认 `!pwd && ls cases/`，仓库没了就重跑开头 clone+cd cell 再重新解包"。也可提示把 case 解包命令固定成 notebook 里一个可重跑 cell。
+- **范围**：`USAGE.md` 路径 A（半自动子流程）。
+- **状态**：🔴 待解决（第 5 轮记录，先记后修）。
 
 ---
 

@@ -982,3 +982,26 @@ aider 装在 A100（反向 SSH 隧道 `-R 8787` 把本地 LLM 代理透到 A100�
 **④ 暴露的其他毛刺（已记 E2E #12–#14）**：aider 自造 `inspect.signature(Case)` 反射构造漏 `params` 必填字段（#12，约定已补"照 rbf 直接 `Case(...)`"）；路径 B 的 auto-test 子进程不继承 `CUDA_VISIBLE_DEVICES`、且该机默认不暴露 GPU（#13，USAGE 补"写进 test-cmd 前缀"）；aider 纯 API 会话不能自主跑变规模命令 + GPT-5.5 优化阶段 `did not conform to edit format`→空响应卡住（#14，宿主局限，同 §30 GeGLU 的 `__tanhf` 耗尽；USAGE 补半自动说明）。
 
 **元教训**：**净化交付物时，被剥离的作者基建（run_on_a100 的 auto-scale）承载的"诚实性兜底"必须在通用工具（bench_case.py）里补回**——否则净化虽去了私有内容，却也去掉了防短核假象的护栏，让交付物在诚实性上退步。这是"净化无损"的边界：文档措辞无损，但基建承载的能力要显式移植。
+
+
+## 39. 端到端第 5 轮：gptme 路径 A 半自动 RMSNorm + 三宿主同类归一化反向对照完整
+
+gptme 走**路径 A 半自动**（WSL 产码不自测 → base64 打包 → Colab T4 解包跑 verify/bench）做 RMSNorm。**首次跑通路径 A 半自动全流程**。
+
+**① gptme 产物**：正确性 PASS（前 ~2e-6、dX ~2e-6、dgamma 大规模 ~5e-4——**dgamma 精度明显优于 aider 那轮的 4e-2**，gptme 的 dgamma 分块规约更稳）。#12 修复生效：`__init__.py` 直接 `CASE = Case(...)` 显式传字段，不再像 aider 那样 inspect 反射自造漏字段。性能 FAIL：计算主导区（T4，baseline 前 9.42ms/反 13.72ms，**非短核**）前 1.00×（带宽墙）、**反 0.29×（严重负优化，candidate 47.6ms vs baseline 13.7ms）**。
+
+**② 反向 0.29× 根因（诊断，未干预）**：gptme 反向分 3 kernel（dx + dgamma_partial + dgamma_finalize），思路（分 kernel 避 atomic 竞争）没错，但**并行结构写坏**——`dgamma_partial`/`finalize` 里大量 `if threadIdx.x==0` 只让单线程落盘、`finalize<<<D,BLOCK>>>` 启 D=1024 block 各自低效串行规约，线程大量闲置 + 3 次 launch 串联，反向比 baseline 慢 3.5×。**不是"没融合"（那顶多打平），是并行度写崩**。
+
+**③ 三宿主同类归一化反向对照完整（同 skill、同类小 reduce 归一化，实现力分层铁证）**：
+
+| 宿主 | 算法 | 前向 | 反向 | 反向手法 |
+|------|------|------|------|----------|
+| **codex** | LayerNorm | 1.00×(带宽墙) | **1.9× 真赢** | 单 kernel 全融合 dX+dgamma+dbeta、输入各读一遍（访存减半翻墙） |
+| **aider** | RMSNorm | 0.91×(带宽墙) | 1.05→1.04 擦线 | 拆分两 kernel、没融合（打平线附近） |
+| **gptme** | RMSNorm | 1.00×(带宽墙) | **0.29× 负优化** | 分 3 kernel 但并行度写崩（单线程落盘/大量闲置） |
+
+**分层清晰：codex ≫ aider > gptme**。三者**前向一致带宽墙**（小 reduce 归一化前向的本征边界，与宿主无关）；**反向拉开差距**——codex 用对融合结构翻墙、aider 拆分打平、gptme 并行写崩负优化。**印证"skill 指对方向（都识别带宽墙、都知道反向要融合），但代替不了 kernel 实现力"**——同一份方法论下，实现力决定反向能翻墙(1.9×)、打平(1.05×)还是写崩(0.29×)。
+
+**④ 路径 A 半自动体验（E2E #10/#15）**：半自动搬运（base64 打包→Colab 解包）可行但繁琐；Colab 运行时中途重置一次致 clone 仓库+解包 case 全丢、需重建（#15）。半自动确认了"本地 CLI agent + Colab 只能人工中转、agent 不自主自测"（#10）——路径 A 对本地 agent 的固有限制。
+
+**collected**：gptme RMSNorm **不收录**（性能负优化，无收录价值）；三宿主对照结论记录在案。本轮价值在**跑通半自动流程 + 补齐三宿主实现力分层的完整证据链**，非产出可用 kernel。
