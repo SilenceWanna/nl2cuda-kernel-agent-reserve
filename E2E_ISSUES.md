@@ -26,6 +26,7 @@
 - **第 4 轮（2026-08-01，aider 路径 B 实走 RMSNorm 端到端）**：aider 装在 A100 上（反向 SSH 隧道把本地 LLM 代理透到 A100）、走路径 B 做 RMSNorm。走通流程但**未达标**（计算主导区前 0.91× 带宽墙 / 反 1.05→1.04× 擦线放大即掉），且暴露 4 个问题（#11–#14）。真实产出：确认交付仓即装即用 + skill 内化生效（aider 主动写 RMS_B 短核警告），但也暴露**交付仓无短核兜底致假 PASS**（#11，最重要）。宿主分层再现：codex LayerNorm 反向做出单 kernel 全融合翻墙 1.9×，aider RMSNorm 反向停在拆分版擦线。
 - **第 5 轮（2026-08-03，gptme 路径 A 半自动实走 RMSNorm）**：gptme 在 WSL 产码（只产不测，本机无 GPU）→ base64 打包 → Colab(T4) 解包跑 verify/bench。**首次跑通路径 A 半自动全流程**。gptme 产物正确性 PASS（含 #12 修复生效：`__init__.py` 直接 `Case(...)` 不再反射自造；dgamma 大规模 ~5e-4 精度优于 aider），但性能 FAIL（计算主导区 baseline 9.4/13.7ms 非短核，前 1.00× 带宽墙 / **反 0.29× 严重负优化**）。暴露 #15（Colab 运行时重置坑）。**三宿主同类归一化反向对照就此完整**（见矩阵 §39）。
 - **第 6 轮（2026-08-03，用户 Colab 走 notebook 冒烟）**：用户在 Colab 打开交付仓 `notebooks/run.ipynb`，前几个 cell 正常，跑到"## 6. LayerNorm case"节报 `ModuleNotFoundError: No module named 'cases.layernorm'`。暴露 #16（notebook 引用交付仓不存在的 layernorm case）。
+- **第 7 轮（2026-08-03，用户 Colab 半自动跑 codex 产的 dynamic_grid_evolution）**：codex 在用户本地 Windows 产码，用户按 USAGE 在 Colab 跑，连环踩坑（#17 汇总：`!` 前缀、`<占位符>`照抄、本地产码没搬进 Colab、运行时重置丢仓库、最终 Colab 限额）。转 A100 跑通：verify 5 种子 PASS + bench **DGE_SIZE=4096 前 4.63×/反 5.26×（2048 短核 4.14/4.24 被自检警告，放大不降反升=真达标）**。codex 端到端产出全新算法达标 kernel（继 LayerNorm 后又一成功案例）。
 
 ---
 
@@ -143,6 +144,12 @@
 - **期望**：make_delivery 净化阶段**删掉交付仓 notebook 的 layernorm 那节 cell**（cell 11-12 + 对应 markdown），只留 rbf 冒烟。开发仓 notebook 保留原样（作者环境有 layernorm 能跑）。"skill 通用性"由用户自建新 case 验，不该在 notebook 预设一个交付仓没有的 case。
 - **范围**：`make_delivery.sh` 净化步（新增 notebook 处理）、交付仓 `notebooks/run.ipynb`。
 - **状态**：✅ **已解决（2026-08-03）**：make_delivery 净化阶段新增 notebook 清理——删交付仓 `run.ipynb` 里引用非 rbf case 的 code cell（`--case layernorm` 等）及其 LayerNorm 前导 markdown，只留 rbf 冒烟（11 cell、仅 `case rbf`）。开发仓 notebook 不动。重推交付仓（b361079）验证：notebook 无 layernorm 引用、仅 rbf。
+
+### #17　路径 A Colab 半自动实操坑（一组）：`!`前缀 / `<占位符>`照抄 / 本地产码没搬进 Colab / 限额 🔴→✅
+- **现象**（用户在 Colab 半自动跑 codex 本地产的 dynamic_grid_evolution，连环踩）：① 直接贴 `python skill/scripts/verify_case.py` 报 `SyntaxError`——Colab code cell 是 Python，跑命令行要加 `!`；② `--case <你的算法名>` 把尖括号一起敲成 `--case <dynamic_grid_evolution>` → shell 把 `<` 当重定向报错；③ `ls cases/<名>` 找不到——codex 在**本地 Windows** 产码，case 根本没搬进 Colab（本地/云端隔离，路径 A 半自动的必然）；④ 运行时重置后仓库丢（#15 复现）；⑤ 最终 **Colab 免费额度限额**，无可用运行时，被迫转 A100。
+- **期望**：USAGE 路径 A 补齐 Colab 半自动实操细则——`!` 前缀、占位符别照抄尖括号、本地产码打包/解包搬进 Colab 的具体步骤（tar+base64，无需 git 认证）、cwd 确认、限额后转路径 B/C。
+- **范围**：`USAGE.md` 路径 A。
+- **状态**：✅ **已解决（2026-08-03）**：USAGE 路径 A 新增"半自动搬 case 进 Colab（tar+base64 打包/解包 3 步）"+ 四条 Colab 坑 blockquote（`!`前缀 / `<>`占位符别照抄 / 每次确认 cwd / 免费额度限额后转路径 B/C）。**附带验证**：codex 的 dynamic_grid_evolution 转 A100 后 verify PASS + bench 前 4.63×/反 5.26×（DGE_SIZE=4096 计算主导区，短核自检在 2048 时正确警告）——路径 A 限额是真实约束，路径 B/C（有卡机/远程 SSH）是可靠退路。
 
 ---
 

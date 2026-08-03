@@ -51,6 +51,29 @@ cd nl2cuda-kernel-agent
 > **⚠️ Colab 运行时会重置**：闲置约 90 分钟或断网后，Colab 回收运行时——**clone 的仓库、上传/解包的 case 文件、已编译的 kernel 全部丢失**。回到 Colab 若发现命令报"找不到文件/目录"，先 `!pwd && ls cases/` 确认：仓库没了就**重跑开头的 clone+cd 单元恢复**，再重新放入你的 case。
 > **⚠️ 本地 agent + Colab 只能"半自动"**：你本地跑的 CLI agent（aider/gptme 等）进程**碰不到 Colab 云端 GPU**——只能"agent 在本地产码 → 你手动把 `cases/<name>/` 搬进 Colab（如 git 中转、或打包/解包）跑 `verify/bench` → 把结果贴回给 agent 迭代"。agent 无法在 Colab 里自主自测。要 agent **全自主**自测，需 agent 与 GPU 同环境：路径 B（本机有卡）、路径 C（SSH 到有卡机），或让 agent 本身运行在 Colab 内。
 
+**半自动：把本地 agent 产的 case 搬进 Colab（打包/解包，无需 git 认证）**
+
+1. 本地在 case 目录的**上一级**（含 `cases/` 那层）打包（排除缓存）：
+   ```bash
+   tar czf case.tgz --exclude='__pycache__' --exclude='*.pyc' cases/<你的算法名>
+   base64 -w0 case.tgz          # 输出一整行 base64（复制它）
+   ```
+   （Windows 用自带 tar：`C:\Windows\System32\tar.exe`；base64 可用 `certutil -encode` 或 Git Bash 的 `base64`。）
+2. Colab 里新建 cell 解包（把上面那行 base64 粘进 `B64="..."`，**必须完整、结尾通常是 `==`**）：
+   ```python
+   import base64, tarfile, io
+   B64 = "在此粘贴完整的一行 base64"
+   with tarfile.open(fileobj=io.BytesIO(base64.b64decode(B64))) as t:
+       t.extractall(".")     # 注意：解到当前目录，确保当前 cwd 在仓库根
+   !ls cases/<你的算法名>/kernels/
+   ```
+3. 跑自测（见步骤 3）。改一版就重打包解包一次。
+
+> **⚠️ Colab code cell 是 Python，跑命令行工具要加 `!` 前缀**：`!python skill/scripts/verify_case.py --case <名>`（不加 `!` 会被当 Python 解析报 `SyntaxError`）。
+> **⚠️ `<...>` 是占位符，别照抄尖括号**：`--case <你的算法名>` 要替换成实际名如 `--case rmsnorm`，不是原样敲 `--case <rmsnorm>`（`<` 会被 shell 当重定向符报错）。
+> **⚠️ 每次跑命令前确认 cwd 在仓库根**：Colab cell 间 cwd 可能漂移或运行时重置，命令报"找不到文件"时先 `%cd /content/<仓库名>` 再跑。
+> **⚠️ Colab 免费额度有限**：连续用一段时间会限额（提示无可用运行时/需等待或升级）。限额后转路径 B（自备/云 GPU）或路径 C（SSH 远程 GPU）继续；case 已在本地，同样打包搬过去即可。
+
 ### 路径 B：自备本地 / 云 GPU 机
 
 > **Windows 用户请在 WSL（Ubuntu）里操作**——CUDA 编译链路在 WSL 下最顺（宿主装好 NVIDIA 驱动，WSL 内装 CUDA toolkit + PyTorch(cuda)）。在 PowerShell 里直接跑通常会卡在 nvcc/编译环节。进入 WSL：开始菜单搜 "Ubuntu" 或终端里 `wsl`。
