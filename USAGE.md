@@ -48,6 +48,9 @@ cd nl2cuda-kernel-agent
 3. **从上到下依次运行它的单元即可**——notebook 已包含：clone/pull 仓库 → `pip install ninja` → `probe_env.py`（确认 GPU/CUDA/torch）→ `smoke_test.py`（确认 nvcc+ninja 编译链路）→ `verify_case.py --case rbf`（正确性全 PASS）→ `bench_case.py --case rbf`（加速比）。
 4. 跑到 rbf 的 `verify` 全 PASS，环境即就绪。**走完 notebook = 环境准备 + 冒烟验证都已完成**，直接进步骤 2。
 
+> **⚠️ Colab 运行时会重置**：闲置约 90 分钟或断网后，Colab 回收运行时——**clone 的仓库、上传/解包的 case 文件、已编译的 kernel 全部丢失**。回到 Colab 若发现命令报"找不到文件/目录"，先 `!pwd && ls cases/` 确认：仓库没了就**重跑开头的 clone+cd 单元恢复**，再重新放入你的 case。
+> **⚠️ 本地 agent + Colab 只能"半自动"**：你本地跑的 CLI agent（aider/gptme 等）进程**碰不到 Colab 云端 GPU**——只能"agent 在本地产码 → 你手动把 `cases/<name>/` 搬进 Colab（如 git 中转、或打包/解包）跑 `verify/bench` → 把结果贴回给 agent 迭代"。agent 无法在 Colab 里自主自测。要 agent **全自主**自测，需 agent 与 GPU 同环境：路径 B（本机有卡）、路径 C（SSH 到有卡机），或让 agent 本身运行在 Colab 内。
+
 ### 路径 B：自备本地 / 云 GPU 机
 
 > **Windows 用户请在 WSL（Ubuntu）里操作**——CUDA 编译链路在 WSL 下最顺（宿主装好 NVIDIA 驱动，WSL 内装 CUDA toolkit + PyTorch(cuda)）。在 PowerShell 里直接跑通常会卡在 nvcc/编译环节。进入 WSL：开始菜单搜 "Ubuntu" 或终端里 `wsl`。

@@ -103,7 +103,7 @@
 - **现象**：USAGE 路径 A 让用户"打开 Colab notebook 跑"，隐含 agent 能在 Colab 里自测。但 Colab GPU 在 Google 云端，**本地跑的 CLI agent（aider/gptme）进程碰不到它**——只能"本地 agent 产码 → 用户手动把 case 搬进 Colab 跑 verify/bench → 结果回贴给 agent 迭代"的**半自动**模式，agent 不自主自测。厘清 aider/gptme 端到端路径时发现（大多数用户若本地跑 agent + 用 Colab，都会撞上这个）。
 - **期望**：USAGE 路径 A 明确两种子形态并给流程——**A-1 半自动**（本地 agent 产码 + 用户中转 Colab 跑 + 回贴，本地 CLI agent 的现实路径）；**A-2 全自动**（agent 本身运行在 Colab 环境内，如 Colab terminal 里驱动，才能自主摸 GPU）。并点明"agent 全自主自测需要 agent 与 GPU 同环境（路径 B 本机有卡 / 路径 C SSH 到有卡机 / 路径 A-2 agent 在 Colab 内）；本地 agent + Colab 只能半自动"。
 - **范围**：`USAGE.md` 路径 A、步骤 3（自主自测的前提）。
-- **状态**：🔴 待解决（第 3 轮记录，先记后修——本轮先做 aider/gptme 端到端，问题攒一起改）。
+- **状态**：✅ **已解决（2026-08-03，与 #15 同一处 blockquote）**：USAGE 路径 A 补"本地 agent + Colab 只能半自动（本地 CLI agent 碰不到 Colab 云 GPU，只能产码→手动搬运→跑→回贴）；agent 全自主自测需 agent 与 GPU 同环境（路径 B 本机有卡/路径 C SSH 到有卡机/agent 运行在 Colab 内）"。步骤 3 亦已有纯 API 会话 agent 半自动说明（#14 时补）。
 
 ### #11　交付仓无 auto-scale 兜底 → 短核假象骗过 PASS（第 4 轮，最重要）🔴
 - **现象**：aider RMSNorm 默认 B=1024 短核，`bench_case.py` 报**前 1.51×/反 1.85× "PASS"**——但 baseline 前 0.065ms/反 0.183ms 都 <1ms，是固定开销抬高的**短核假象**。放大到计算主导区 RMS_B=262144（baseline≥1ms）真实是**前 0.91× FAIL / 反 1.05× 擦线**，2× 规模再掉到 1.04× FAIL。通用用户若只看默认输出，会被"1.85× PASS"误导，以为达标。
@@ -134,7 +134,7 @@
 - **现象**：gptme 路径 A 半自动测试中，Colab 运行时中途重置了一次——重连后 `git clone` 的仓库整个丢失，只剩解包出的孤立 `cases/rmsnorm`（且落在 `/content/cases` 而非仓库内），`verify_case.py` 找不到。得重新 `git clone` + `%cd` + 重贴解包 cell 才恢复。
 - **期望**：USAGE 路径 A 提醒"Colab 闲置约 90 分钟/断网会重置运行时，clone 的仓库和上传的 case 都会丢；半自动流程里 agent 产码与 Colab 跑之间若隔较久，回到 Colab 先确认 `!pwd && ls cases/`，仓库没了就重跑开头 clone+cd cell 再重新解包"。也可提示把 case 解包命令固定成 notebook 里一个可重跑 cell。
 - **范围**：`USAGE.md` 路径 A（半自动子流程）。
-- **状态**：🔴 待解决（第 5 轮记录，先记后修）。
+- **状态**：✅ **已解决（2026-08-03）**：USAGE 路径 A 补 blockquote"Colab 运行时闲置~90min/断网会重置，clone 仓库+上传解包的 case+已编译 kernel 全丢；回到 Colab 报找不到文件先 `!pwd && ls cases/` 确认，仓库没了重跑 clone+cd 单元恢复再重放 case"。
 
 ---
 
