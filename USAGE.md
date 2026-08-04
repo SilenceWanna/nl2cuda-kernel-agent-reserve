@@ -166,11 +166,11 @@ python skill/scripts/profile_case.py   --case <你的算法名>   # ④ 未达�
 
 > **agent 能否自主放大复测？** 有 shell 执行能力的 agent（能自己跑命令）可自主放大；但**纯 API 会话式 agent（只会跑一条固定的自动测试命令、不能自己改规模）**——这类要么把大规模写进那条测试命令（如让它跑 `RMS_B=262144 python skill/scripts/bench_case.py --case <名>`），要么你手动跑大规模命令、把输出贴回给 agent 判断（半自动）。
 
-### 路径 A（Colab）用户：半自动把本地 agent 产的 case 搬进 Colab 跑
+### 路径 A（Colab）用户：两阶段——先本地出产物，再 Colab 一次性跑完
 
-若你走路径 A（Colab），本地 agent 产码后 Colab 碰不到它——按以下打包/解包搬进 Colab 自测（无需 git 认证），结果贴回给 agent 迭代：
+**⚠️ Colab 的头号坑：运行时会超时/断连重置**（闲置约 90 分钟或断网），一旦重置，clone 的仓库、解包的 case、已编译的 kernel 全丢。**分步交互（clone 一个 cell、解包一个 cell、跑一个 cell）极易在中途被重置打断**。因此路径 A 用**两阶段 + 一次性执行**：
 
-1. 本地在 case 目录的**上一级**（含 `cases/` 那层）打包成一行 base64（复制它）：
+**阶段一（本地，不碰 Colab、不受超时影响）**：让 agent 在本地把 case 完整产出（reference/config/__init__/op/kernels 全部写盘），你**先不上 Colab**。产物稳定后再打包成一行 base64：
    - **Linux / macOS / WSL / Git Bash**：
      ```bash
      tar czf case.tgz --exclude='__pycache__' --exclude='*.pyc' cases/<你的算法名>
@@ -182,29 +182,36 @@ python skill/scripts/profile_case.py   --case <你的算法名>   # ④ 未达�
      [Convert]::ToBase64String([IO.File]::ReadAllBytes("case.tgz")) | Set-Content -NoNewline case_b64.txt
      # 打开 case_b64.txt 复制那一整行（别用 certutil -encode——它带页眉/多行，需手工清理易错）
      ```
-2. Colab 里新建 cell 解包（把上面那行 base64 粘进 `B64="..."`，**必须完整、结尾通常是 `==`**）：
+
+**阶段二（Colab，一个 cell 从头跑到尾）**：新建 T4 运行时，**只用下面这一个 cell**（clone → 装依赖 → 解包 case → verify → bench 全绑一起，中间无停顿、不给重置留空隙）。把 `<你的算法名>` 换成实际名、`B64` 粘上阶段一那行 base64：
    ```python
-   import base64, tarfile, io
-   B64 = "在此粘贴完整的一行 base64"
+   # ① 环境 ② 解包 case ③ 自测——一个 cell 跑完，避免 Colab 分步被超时打断
+   import os, base64, tarfile, io
+   os.chdir("/content")
+   if not os.path.isdir("/content/nl2cuda-kernel-agent-skill"):
+       !git clone https://github.com/SilenceWanna/nl2cuda-kernel-agent-skill.git
+   os.chdir("/content/nl2cuda-kernel-agent-skill")
+   !pip install ninja -q
+   CASE = "<你的算法名>"            # ← 改成你的 case 名，如 rmsnorm
+   B64  = "<在此粘贴阶段一那一整行 base64>"
    with tarfile.open(fileobj=io.BytesIO(base64.b64decode(B64))) as t:
-       t.extractall(".")     # 注意：解到当前目录，确保当前 cwd 在仓库根
-   !ls cases/<你的算法名>/kernels/
+       t.extractall(".")
+   print("case 文件:", os.listdir(f"cases/{CASE}"))
+   !python skill/scripts/verify_case.py --case {CASE}
+   !python skill/scripts/bench_case.py  --case {CASE}
    ```
-3. Colab 里新建 cell 跑自测（**下面这段可直接复制**，把 `<你的算法名>` 换成实际名如 `rmsnorm`；`!` 前缀已带好）：
-   ```python
-   !python skill/scripts/verify_case.py --case <你的算法名>
-   !python skill/scripts/bench_case.py  --case <你的算法名>
-   ```
-   若 `bench` 报"短核假象警告"（baseline <1ms），用大规模复测（`<规模ENV>` 见该 case 的 `config.py`，如 RMSNorm 是 `RMS_B`）：
+   - `os.chdir` 用 Python（跨行不漂），比分散的 `%cd` 稳；`{CASE}` 是 Python f-string 插值，自动填入 case 名（无需手改多处、也不会残留尖括号）。
+   - 首次含 rbf 无关，直接跑你的 case；nvcc 首次编译要等几分钟、中途无输出正常。
+
+**若 `bench` 报"短核假象警告"**（baseline <1ms，小 reduce/归一化/逐元素类常见），在同一运行时里补跑一个 cell 放大规模（`<规模ENV>` 见该 case `config.py`，如 RMSNorm 是 `RMS_B`）：
    ```python
    !<规模ENV>=262144 python skill/scripts/bench_case.py --case <你的算法名>
    ```
-   改一版就重打包解包一次（回第 1-2 步）。
 
-> **⚠️ Colab code cell 是 Python**：跑命令行工具**必须行首加 `!`**（上面已带）。若你复制上方步骤 3 的通用命令块（不带 `!`），在 Colab 里每行前补 `!`。
-> **⚠️ `<...>` 是占位符，别照抄尖括号**：`--case <你的算法名>` 要替换成实际名如 `--case rmsnorm`，不是原样敲 `--case <rmsnorm>`（`<` 会被 shell 当重定向符报错）。
-> **⚠️ 每次跑命令前确认 cwd 在仓库根**：Colab cell 间 cwd 可能漂移或运行时重置，命令报"找不到文件"时先 `%cd /content/<仓库名>` 再跑。
-> **⚠️ Colab 免费额度有限**：连续用一段时间会限额（提示无可用运行时/需等待或升级）。限额后转路径 B（自备/云 GPU）或路径 C（SSH 远程 GPU）继续；case 已在本地，同样打包搬过去即可。
+**改一版就重来**：agent 本地改完 → 重打包 → **重跑阶段二那一个 cell**（它带 `if not isdir` 幂等判断，仓库在就跳过 clone、只重解包+自测）。
+
+> **⚠️ Colab 免费额度有限**：连续用一段时间会限额（提示无可用运行时/需等待或升级）。限额后转路径 B（自备/云 GPU）或路径 C（SSH 远程 GPU）继续——**产物已在本地（阶段一），同样打包搬过去即可，不用重来**。
+> **⚠️ `<...>` 是占位符**：`CASE="<你的算法名>"` 要填实际名如 `CASE="rmsnorm"`，别留尖括号。
 
 ---
 
