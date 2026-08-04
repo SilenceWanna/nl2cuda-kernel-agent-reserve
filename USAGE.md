@@ -49,45 +49,7 @@ cd nl2cuda-kernel-agent
 4. 跑到 rbf 的 `verify` 全 PASS，环境即就绪。**走完 notebook = 环境准备 + 冒烟验证都已完成**，直接进步骤 2。
 
 > **⚠️ Colab 运行时会重置**：闲置约 90 分钟或断网后，Colab 回收运行时——**clone 的仓库、上传/解包的 case 文件、已编译的 kernel 全部丢失**。回到 Colab 若发现命令报"找不到文件/目录"，先 `!pwd && ls cases/` 确认：仓库没了就**重跑开头的 clone+cd 单元恢复**，再重新放入你的 case。
-> **⚠️ 本地 agent + Colab 只能"半自动"**：你本地跑的 CLI agent（aider/gptme 等）进程**碰不到 Colab 云端 GPU**——只能"agent 在本地产码 → 你手动把 `cases/<name>/` 搬进 Colab（如 git 中转、或打包/解包）跑 `verify/bench` → 把结果贴回给 agent 迭代"。agent 无法在 Colab 里自主自测。要 agent **全自主**自测，需 agent 与 GPU 同环境：路径 B（本机有卡）、路径 C（SSH 到有卡机），或让 agent 本身运行在 Colab 内。
-
-**半自动：把本地 agent 产的 case 搬进 Colab（打包/解包，无需 git 认证）**
-
-1. 本地在 case 目录的**上一级**（含 `cases/` 那层）打包成一行 base64（复制它）：
-   - **Linux / macOS / WSL / Git Bash**：
-     ```bash
-     tar czf case.tgz --exclude='__pycache__' --exclude='*.pyc' cases/<你的算法名>
-     base64 -w0 case.tgz          # 输出一整行 base64
-     ```
-   - **Windows PowerShell**（`base64 -w0` 在 PowerShell 不可用；tar 是 Win10/11 自带的）：
-     ```powershell
-     tar czf case.tgz --exclude=__pycache__ --exclude=*.pyc cases/<你的算法名>
-     [Convert]::ToBase64String([IO.File]::ReadAllBytes("case.tgz")) | Set-Content -NoNewline case_b64.txt
-     # 打开 case_b64.txt 复制那一整行（别用 certutil -encode——它带页眉/多行，需手工清理易错）
-     ```
-2. Colab 里新建 cell 解包（把上面那行 base64 粘进 `B64="..."`，**必须完整、结尾通常是 `==`**）：
-   ```python
-   import base64, tarfile, io
-   B64 = "在此粘贴完整的一行 base64"
-   with tarfile.open(fileobj=io.BytesIO(base64.b64decode(B64))) as t:
-       t.extractall(".")     # 注意：解到当前目录，确保当前 cwd 在仓库根
-   !ls cases/<你的算法名>/kernels/
-   ```
-3. Colab 里新建 cell 跑自测（**下面这段可直接复制**，把 `<你的算法名>` 换成实际名如 `rmsnorm`；`!` 前缀已带好）：
-   ```python
-   !python skill/scripts/verify_case.py --case <你的算法名>
-   !python skill/scripts/bench_case.py  --case <你的算法名>
-   ```
-   若 `bench` 报"短核假象警告"（baseline <1ms），用大规模复测（`<规模ENV>` 见该 case 的 `config.py`，如 RMSNorm 是 `RMS_B`）：
-   ```python
-   !<规模ENV>=262144 python skill/scripts/bench_case.py --case <你的算法名>
-   ```
-   改一版就重打包解包一次（回第 1-2 步）。
-
-> **⚠️ Colab code cell 是 Python**：跑命令行工具**必须行首加 `!`**（上面已带）。若你从别处（如本文档步骤 3 的通用命令块）复制不带 `!` 的命令，会被当 Python 解析报 `SyntaxError`——在 Colab 里每行前补 `!`。
-> **⚠️ `<...>` 是占位符，别照抄尖括号**：`--case <你的算法名>` 要替换成实际名如 `--case rmsnorm`，不是原样敲 `--case <rmsnorm>`（`<` 会被 shell 当重定向符报错）。
-> **⚠️ 每次跑命令前确认 cwd 在仓库根**：Colab cell 间 cwd 可能漂移或运行时重置，命令报"找不到文件"时先 `%cd /content/<仓库名>` 再跑。
-> **⚠️ Colab 免费额度有限**：连续用一段时间会限额（提示无可用运行时/需等待或升级）。限额后转路径 B（自备/云 GPU）或路径 C（SSH 远程 GPU）继续；case 已在本地，同样打包搬过去即可。
+> **⚠️ 本地 agent + Colab 只能"半自动"**：你本地跑的 CLI agent（aider/gptme 等）进程**碰不到 Colab 云端 GPU**——agent 在本地产码，你需手动把 case 搬进 Colab 跑、结果贴回。**具体半自动操作见步骤 3**（要 agent 全自主自测，用路径 B 本机有卡 / 路径 C SSH 到有卡机）。
 
 ### 路径 B：自备本地 / 云 GPU 机
 
@@ -203,6 +165,46 @@ python skill/scripts/profile_case.py   --case <你的算法名>   # ④ 未达�
 - **本征边界**：有些算法（纯访存前向、cuSOLVER/cuFFT 级厂商库前向）手写打不过是正常的——`SKILL.md` 的"识别本征边界"章节讲了何时该停、诚实报边界，别空转。
 
 > **agent 能否自主放大复测？** 有 shell 执行能力的 agent（能自己跑命令）可自主放大；但**纯 API 会话式 agent（只会跑一条固定的自动测试命令、不能自己改规模）**——这类要么把大规模写进那条测试命令（如让它跑 `RMS_B=262144 python skill/scripts/bench_case.py --case <名>`），要么你手动跑大规模命令、把输出贴回给 agent 判断（半自动）。
+
+### 路径 A（Colab）用户：半自动把本地 agent 产的 case 搬进 Colab 跑
+
+若你走路径 A（Colab），本地 agent 产码后 Colab 碰不到它——按以下打包/解包搬进 Colab 自测（无需 git 认证），结果贴回给 agent 迭代：
+
+1. 本地在 case 目录的**上一级**（含 `cases/` 那层）打包成一行 base64（复制它）：
+   - **Linux / macOS / WSL / Git Bash**：
+     ```bash
+     tar czf case.tgz --exclude='__pycache__' --exclude='*.pyc' cases/<你的算法名>
+     base64 -w0 case.tgz          # 输出一整行 base64
+     ```
+   - **Windows PowerShell**（`base64 -w0` 在 PowerShell 不可用；tar 是 Win10/11 自带的）：
+     ```powershell
+     tar czf case.tgz --exclude=__pycache__ --exclude=*.pyc cases/<你的算法名>
+     [Convert]::ToBase64String([IO.File]::ReadAllBytes("case.tgz")) | Set-Content -NoNewline case_b64.txt
+     # 打开 case_b64.txt 复制那一整行（别用 certutil -encode——它带页眉/多行，需手工清理易错）
+     ```
+2. Colab 里新建 cell 解包（把上面那行 base64 粘进 `B64="..."`，**必须完整、结尾通常是 `==`**）：
+   ```python
+   import base64, tarfile, io
+   B64 = "在此粘贴完整的一行 base64"
+   with tarfile.open(fileobj=io.BytesIO(base64.b64decode(B64))) as t:
+       t.extractall(".")     # 注意：解到当前目录，确保当前 cwd 在仓库根
+   !ls cases/<你的算法名>/kernels/
+   ```
+3. Colab 里新建 cell 跑自测（**下面这段可直接复制**，把 `<你的算法名>` 换成实际名如 `rmsnorm`；`!` 前缀已带好）：
+   ```python
+   !python skill/scripts/verify_case.py --case <你的算法名>
+   !python skill/scripts/bench_case.py  --case <你的算法名>
+   ```
+   若 `bench` 报"短核假象警告"（baseline <1ms），用大规模复测（`<规模ENV>` 见该 case 的 `config.py`，如 RMSNorm 是 `RMS_B`）：
+   ```python
+   !<规模ENV>=262144 python skill/scripts/bench_case.py --case <你的算法名>
+   ```
+   改一版就重打包解包一次（回第 1-2 步）。
+
+> **⚠️ Colab code cell 是 Python**：跑命令行工具**必须行首加 `!`**（上面已带）。若你复制上方步骤 3 的通用命令块（不带 `!`），在 Colab 里每行前补 `!`。
+> **⚠️ `<...>` 是占位符，别照抄尖括号**：`--case <你的算法名>` 要替换成实际名如 `--case rmsnorm`，不是原样敲 `--case <rmsnorm>`（`<` 会被 shell 当重定向符报错）。
+> **⚠️ 每次跑命令前确认 cwd 在仓库根**：Colab cell 间 cwd 可能漂移或运行时重置，命令报"找不到文件"时先 `%cd /content/<仓库名>` 再跑。
+> **⚠️ Colab 免费额度有限**：连续用一段时间会限额（提示无可用运行时/需等待或升级）。限额后转路径 B（自备/云 GPU）或路径 C（SSH 远程 GPU）继续；case 已在本地，同样打包搬过去即可。
 
 ---
 
