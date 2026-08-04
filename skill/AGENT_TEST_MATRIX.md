@@ -1043,3 +1043,22 @@ gptme 走**路径 A 半自动**（WSL 产码不自测 → base64 打包 → Cola
 **与 11.1 归一化家族的关键区别**：归一化前向是小 reduce（有规约结构、多梯度反向可融合翻墙）；maxpool/geglu 前向是**纯访存**（读4写1 / 逐元素），candidate 访存量 = baseline、都达峰值带宽 → **无融合空间 = 真本征带宽墙**，且它们反向单梯度（无多输出可融）本就已赢。故 **11.2 是"坐实边界"非优化**——这些前向确实打不过，是算法本征、非"没融够"。**附带验证 bench 短核自检（#11）有效**：maxpool N=512 前向短核虚高 1.06 被自检警告，放大 N=2048 掉回真本征 1.02。
 
 **阶段 11 收官结论**：带宽墙分两类——① **纯访存前向**（maxpool/geglu/逐元素）= 真本征，融合也救不了，诚实认边界；② **小 reduce 归一化前向 + 其反向**曾被误判带宽墙，实为"前向本征带宽墙、反向靠单 kernel 全融合可翻墙"。判定铁律：**分前/反向、分 kernel 融合结构、计算主导区多规模验证**（短核假象会把两类都误判）。产出：welford 反向翻墙收录（1.20→1.92×）+ 三 case"暂存疑"解除 + maxpool/geglu 前向真本征坐实。
+
+
+## 41. 扩形态：dynamic_grid_evolution（第二十四形态，2D 数据依赖 stencil + gather 式反向消 atomic；codex 端到端产出收录）
+
+第二十四形态，**codex 交付仓端到端产出**（用户本地 codex 建，A100 复验达标后收录）。算法：2D 能量场 `E[H,W]`，每点读 3×3 邻域、每邻域元素按自身值生成动态 sigmoid 权重 `w=sigmoid(k·x)`，加权和过 sigmoid 得输出；零填充边界，只对 E 求梯度。
+
+**① 相关度分析（判收录）——相关度中低、揉合已有形态没覆盖的组合维度**：
+- vs **maxpool**（2D 空间窗口）：maxpool 读4写1无权重、前向带宽墙；dge 每点 3×3 全邻域 + 逐元素动态门控，算术强度高得多 → **稳赢非带宽墙**。
+- vs **conv1d**（邻域加权）：conv1d 是 1D + **固定权重**；dge 是 2D + **数据依赖动态权重**（权重随输入值变，类 gated_ssm 的 sigmoid 门控但在空间维而非时序）。
+- vs **gridsample**（数据依赖）：gridsample 是坐标采样 gather 4 邻点；dge 是固定 3×3 stencil + 逐元素门控。
+- **结论：2D 空间 stencil + 逐元素数据依赖权重是新组合维度**（已有形态无一覆盖）。
+
+**② 实现新思路——gather 式反向消 atomic**：
+- **前向**：shared-mem tile（含 halo，一 block 载入 tile+边界、block 内复用 3×3 邻域）——2D stencil 标准高效手法。
+- **反向**：**gather 式**——每个输入格点读它影响的至多 9 个输出、反算其梯度贡献，**主动避开全局 atomicAdd**。区别于已有反向策略（scatter_add/segment_softmax 用 atomic、gridsample 低冲突 atomic scatter）——对**固定 stencil**，gather 反向（每输入定位其 9 个下游）是消 atomic 竞争的更优范式，是**空间 stencil 反向的新范式**。
+
+**③ A100 实测（计算主导区）**：verify 5 种子 PASS（前 ~1.8e-7、反 dE ~7e-7）；bench **DGE_SIZE=4096 前 4.63×/反 5.26×**（baseline 前 1.61ms/反 1.52ms 非短核；DGE_SIZE=2048 时 baseline<1ms 短核，前 4.14/反 4.24 被 bench 短核自检警告，放大**不降反升**=真达标非虚高）。**稳赢区**：数据依赖 stencil 算术强度够（每点 9 次 sigmoid+乘加），前反向都大幅真赢。
+
+**collected**：codex 版收进主仓 `cases/dynamic_grid_evolution/`（shared tile 前向 + gather 式反向消 atomic + 零填充 3×3 stencil reference；前 4.63/反 5.26 真达标）。check_reference CLEAN。**收录理由：相关度中低（新组合维度）+ 实现有新思路（gather 式 stencil 反向消 atomic），符合"相关性小且有新思路则收"标准。** 也是 codex 端到端第 2 个成功产出（继 §37 LayerNorm 反向翻墙）。
