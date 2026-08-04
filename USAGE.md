@@ -53,12 +53,18 @@ cd nl2cuda-kernel-agent
 
 **半自动：把本地 agent 产的 case 搬进 Colab（打包/解包，无需 git 认证）**
 
-1. 本地在 case 目录的**上一级**（含 `cases/` 那层）打包（排除缓存）：
-   ```bash
-   tar czf case.tgz --exclude='__pycache__' --exclude='*.pyc' cases/<你的算法名>
-   base64 -w0 case.tgz          # 输出一整行 base64（复制它）
-   ```
-   （Windows 用自带 tar：`C:\Windows\System32\tar.exe`；base64 可用 `certutil -encode` 或 Git Bash 的 `base64`。）
+1. 本地在 case 目录的**上一级**（含 `cases/` 那层）打包成一行 base64（复制它）：
+   - **Linux / macOS / WSL / Git Bash**：
+     ```bash
+     tar czf case.tgz --exclude='__pycache__' --exclude='*.pyc' cases/<你的算法名>
+     base64 -w0 case.tgz          # 输出一整行 base64
+     ```
+   - **Windows PowerShell**（`base64 -w0` 在 PowerShell 不可用；tar 是 Win10/11 自带的）：
+     ```powershell
+     tar czf case.tgz --exclude=__pycache__ --exclude=*.pyc cases/<你的算法名>
+     [Convert]::ToBase64String([IO.File]::ReadAllBytes("case.tgz")) | Set-Content -NoNewline case_b64.txt
+     # 打开 case_b64.txt 复制那一整行（别用 certutil -encode——它带页眉/多行，需手工清理易错）
+     ```
 2. Colab 里新建 cell 解包（把上面那行 base64 粘进 `B64="..."`，**必须完整、结尾通常是 `==`**）：
    ```python
    import base64, tarfile, io
