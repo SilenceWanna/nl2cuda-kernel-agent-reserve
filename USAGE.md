@@ -90,29 +90,37 @@ agent 会（按 `SKILL.md` 流程）：
   # 打开 case_b64.txt 复制那一整行（别用 certutil -encode——它带页眉/多行，需手工清理易错）
   ```
 
-## A-3　阶段二：Colab 一个 cell 从头跑到尾
+## A-3　阶段二：Colab 用现成 notebook，填两个空跑完
 
-1. 打开 [Colab](https://colab.research.google.com/)，`代码执行程序 → 更改运行时类型 → T4 GPU`。
-2. **只用下面这一个 cell**（clone → 装依赖 → 解包 case → verify → bench 全绑一起，中间无停顿、不给超时留空隙）。把 `CASE` 改成你的 case 名、`B64` 粘上 A-2 那行 base64：
-   ```python
-   # 环境 + 解包 case + 自测，一个 cell 跑完（避免 Colab 分步被超时打断）
-   import os, base64, tarfile, io
-   os.chdir("/content")
-   if not os.path.isdir("/content/nl2cuda-kernel-agent-skill"):
-       !git clone https://github.com/SilenceWanna/nl2cuda-kernel-agent-skill.git
-   os.chdir("/content/nl2cuda-kernel-agent-skill")
-   !pip install ninja -q
-   CASE = "你的算法名"                       # ← 改成实际 case 名，如 rmsnorm（不要留尖括号）
-   B64  = "在此粘贴 A-2 那一整行 base64"      # ← 一整行，结尾通常是 ==
-   with tarfile.open(fileobj=io.BytesIO(base64.b64decode(B64))) as t:
-       t.extractall(".")
-   print("case 文件:", os.listdir(f"cases/{CASE}"))
-   !python skill/scripts/verify_case.py --case {CASE}
-   !python skill/scripts/bench_case.py  --case {CASE}
-   ```
-   - `os.chdir`（Python，跨行不漂）比分散的 `%cd` 稳；`{CASE}` 是 f-string 插值，只填一处、不会残留尖括号。
-   - 首次 nvcc 编译要等几分钟、中途无输出正常，别当卡死。
-   - `verify` 全 PASS 才看 `bench`；正确性不过先让 agent 修正确性、别看性能。
+交付物自带 `notebooks/run.ipynb`——**已写好两个 cell 的骨架，你只需在现成基础上填空**，不用从零敲。
+
+1. 打开 [Colab](https://colab.research.google.com/)，`代码执行程序 → 更改运行时类型 → T4 GPU`，`文件 → 上传笔记本` 传入仓库里的 `notebooks/run.ipynb`。
+2. **跑 Cell 1（冒烟）**：原样运行——clone 仓库 + 装 ninja + 跑内置 rbf。rbf 的 verify 全 PASS 即环境就绪（首次 nvcc 编译要等几分钟，无输出正常）。
+3. **跑 Cell 2（你的 case）**：在现成 cell 里填两个空——
+   - `CASE = '你的算法名'`（改成实际名如 `rmsnorm`，**不要留尖括号**）
+   - `B64  = '...'`（粘上 A-2 那一整行 base64，结尾通常是 `==`）
+   
+   运行即解包 case + verify + bench 一次性跑完。Cell 2 是自包含的（自带 clone/装依赖的幂等判断），**即使 Colab 中途重置，单跑 Cell 2 也能自我恢复**。
+
+> **为什么这样设计**：Colab 闲置约 90 分钟/断网会重置运行时（仓库、case、编译产物全丢）。两个 cell 各自把"环境+任务"绑成一次性执行，重置后重跑该 cell 即可，不会卡在"分步做到一半被打断"。
+
+若手头没有 notebook（或想手敲），Cell 2 等价的自包含代码就是：
+```python
+import os, base64, tarfile, io
+os.chdir("/content")
+if not os.path.isdir("/content/nl2cuda-kernel-agent-skill"):
+    !git clone https://github.com/SilenceWanna/nl2cuda-kernel-agent-skill.git
+os.chdir("/content/nl2cuda-kernel-agent-skill")
+!pip install ninja -q
+CASE = "你的算法名"                       # ← 改成实际 case 名，如 rmsnorm（不要留尖括号）
+B64  = "在此粘贴 A-2 那一整行 base64"      # ← 一整行，结尾通常是 ==
+with tarfile.open(fileobj=io.BytesIO(base64.b64decode(B64))) as t:
+    t.extractall(".")
+print("case 文件:", os.listdir(f"cases/{CASE}"))
+!python skill/scripts/verify_case.py --case {CASE}
+!python skill/scripts/bench_case.py  --case {CASE}
+```
+`os.chdir`（Python，跨行不漂）比分散的 `%cd` 稳；`{CASE}` 是 f-string 插值，只填一处、不残留尖括号。`verify` 全 PASS 才看 `bench`。
 
 3. **若 `bench` 报"短核假象警告"**（baseline <1ms，小 reduce/归一化/逐元素类常见，加速比被固定开销抬高、不可信），在同一运行时补一个 cell 放大规模复测（`<规模ENV>` 见该 case `config.py`，如 RMSNorm 是 `RMS_B`）：
    ```python
