@@ -27,6 +27,7 @@
 - **第 5 轮（2026-08-03，gptme 路径 A 半自动实走 RMSNorm）**：gptme 在 WSL 产码（只产不测，本机无 GPU）→ base64 打包 → Colab(T4) 解包跑 verify/bench。**首次跑通路径 A 半自动全流程**。gptme 产物正确性 PASS（含 #12 修复生效：`__init__.py` 直接 `Case(...)` 不再反射自造；dgamma 大规模 ~5e-4 精度优于 aider），但性能 FAIL（计算主导区 baseline 9.4/13.7ms 非短核，前 1.00× 带宽墙 / **反 0.29× 严重负优化**）。暴露 #15（Colab 运行时重置坑）。**三宿主同类归一化反向对照就此完整**（见矩阵 §39）。
 - **第 6 轮（2026-08-03，用户 Colab 走 notebook 冒烟）**：用户在 Colab 打开交付仓 `notebooks/run.ipynb`，前几个 cell 正常，跑到"## 6. LayerNorm case"节报 `ModuleNotFoundError: No module named 'cases.layernorm'`。暴露 #16（notebook 引用交付仓不存在的 layernorm case）。
 - **第 7 轮（2026-08-03，用户 Colab 半自动跑 codex 产的 dynamic_grid_evolution）**：codex 在用户本地 Windows 产码，用户按 USAGE 在 Colab 跑，连环踩坑（#17 汇总：`!` 前缀、`<占位符>`照抄、本地产码没搬进 Colab、运行时重置丢仓库、最终 Colab 限额）。转 A100 跑通：verify 5 种子 PASS + bench **DGE_SIZE=4096 前 4.63×/反 5.26×（2048 短核 4.14/4.24 被自检警告，放大不降反升=真达标）**。codex 端到端产出全新算法达标 kernel（继 LayerNorm 后又一成功案例）。
+- **第 8 轮（2026-08-04，交付仓完整性核查——净化/URL改写/notebook重做/USAGE重构后首次以交付仓为准全面确认）**：交付仓是一路增量净化+改写出来的（run_on_a100 净化、URL 改写、notebook 重做、USAGE 两大节重构），此前没以"交付仓现有内容"为准整体验证过 skill 是否还能跑。本轮**静态全面核查**（36 文件）：① **代码零改动**——所有 python（framework/skill scripts/rbf）+ .cu 与开发仓**逐字节一致**（净化只动 .md，未碰功能代码）；② **无死链**——文档不引用任何交付仓缺失的文件（AGENT_TEST_MATRIX/CASE_EVIDENCE/run_on_a100/AUTONOMOUS_LOOP 等私有/已删项均无残留引用）；③ **skill 内引用完整**——SKILL/约定文件引用的 `skill/*.md`、`skill/scripts/*.py` 全部存在。**结论：净化不影响 skill 运行**（代码逐字节一致 → 运行时行为等同开发仓；开发仓 rbf 一直 A100 验过）。用户判定静态核查已足够、**不开阶段 12 实测**（交付仓 rbf 早期预跑过一次 verify/bench 全 PASS 作旁证）。
 
 ---
 
