@@ -67,9 +67,18 @@ cd nl2cuda-kernel-agent
        t.extractall(".")     # 注意：解到当前目录，确保当前 cwd 在仓库根
    !ls cases/<你的算法名>/kernels/
    ```
-3. 跑自测（见步骤 3）。改一版就重打包解包一次。
+3. Colab 里新建 cell 跑自测（**下面这段可直接复制**，把 `<你的算法名>` 换成实际名如 `rmsnorm`；`!` 前缀已带好）：
+   ```python
+   !python skill/scripts/verify_case.py --case <你的算法名>
+   !python skill/scripts/bench_case.py  --case <你的算法名>
+   ```
+   若 `bench` 报"短核假象警告"（baseline <1ms），用大规模复测（`<规模ENV>` 见该 case 的 `config.py`，如 RMSNorm 是 `RMS_B`）：
+   ```python
+   !<规模ENV>=262144 python skill/scripts/bench_case.py --case <你的算法名>
+   ```
+   改一版就重打包解包一次（回第 1-2 步）。
 
-> **⚠️ Colab code cell 是 Python，跑命令行工具要加 `!` 前缀**：`!python skill/scripts/verify_case.py --case <名>`（不加 `!` 会被当 Python 解析报 `SyntaxError`）。
+> **⚠️ Colab code cell 是 Python**：跑命令行工具**必须行首加 `!`**（上面已带）。若你从别处（如本文档步骤 3 的通用命令块）复制不带 `!` 的命令，会被当 Python 解析报 `SyntaxError`——在 Colab 里每行前补 `!`。
 > **⚠️ `<...>` 是占位符，别照抄尖括号**：`--case <你的算法名>` 要替换成实际名如 `--case rmsnorm`，不是原样敲 `--case <rmsnorm>`（`<` 会被 shell 当重定向符报错）。
 > **⚠️ 每次跑命令前确认 cwd 在仓库根**：Colab cell 间 cwd 可能漂移或运行时重置，命令报"找不到文件"时先 `%cd /content/<仓库名>` 再跑。
 > **⚠️ Colab 免费额度有限**：连续用一段时间会限额（提示无可用运行时/需等待或升级）。限额后转路径 B（自备/云 GPU）或路径 C（SSH 远程 GPU）继续；case 已在本地，同样打包搬过去即可。
@@ -175,7 +184,7 @@ agent 会（按 `SKILL.md` 流程）：
 
 确认数学规格后，agent 应**自主循环**：写 kernel → 在你的环境跑 `verify_case.py`（正确性）→ 通过后 `bench_case.py`（性能）→ 未达标按 `loop.md` 优化 → 重跑，直到达标或诚实报边界。你通常无需手动跑命令。
 
-若想自己核验（或 agent 需要你代跑），这几条只读 CLI（在步骤 1 选定的环境里跑）：
+若想自己核验（或 agent 需要你代跑），这几条只读 CLI（在步骤 1 选定的环境里跑；**在 Colab 里每行前加 `!`**，本地/远程 shell 不加）：
 ```bash
 python skill/scripts/verify_case.py    --case <你的算法名>   # ① 正确性 allclose，须全 PASS（不过先修正确性、别看性能）
 python skill/scripts/check_reference.py --case <你的算法名>   # ② reference 静态预检，期望 REF_CHECK=CLEAN（防弱 baseline 假象）
