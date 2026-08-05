@@ -22,9 +22,9 @@
 
 **✅ 达标结果（A100-SXM4-40GB, sm_80）**：前向 **1.10×**、反向 **1.17×**，CV<1.5%，前反向 5 种子正确性全 PASS。全程 fp32、无 fast-math、无高层算子落回。可独立编译的纯 CUDA 交付版见 [`cases/rbf/delivery/`](cases/rbf/delivery/)（`make test` 一键独立编译+自测，不依赖 PyTorch）。
 
-## 24 形态光谱（v1）
+## 25 形态光谱（v1）
 
-RBF 之后又扩了 23 个形态，用**纯自然语言输入**在三宿主（aider / gptme / codex）上逐一验证 skill 的通用性与边界。加速比列 codex 版（诚实 baseline 下的独立复验值，代表 skill 能达到的水平）。下表 26 行 = 24 个形态 + 2 个加固衍生 case（`temperature_softmax`/`l2norm_scale`，softmax/归一化家族内为验证确认闸门与反向融合手段而生，不单列形态序号）：
+RBF 之后又扩了 24 个形态，用**纯自然语言输入**在三宿主（aider / gptme / codex）上逐一验证 skill 的通用性与边界。加速比列 codex 版（诚实 baseline 下的独立复验值，代表 skill 能达到的水平）。下表 27 行 = 25 个形态 + 2 个加固衍生 case（`temperature_softmax`/`l2norm_scale`，softmax/归一化家族内为验证确认闸门与反向融合手段而生，不单列形态序号）：
 
 | 形态 | 维度 | codex 前/反 | 光谱区间 |
 |------|------|------|------|
@@ -54,6 +54,7 @@ RBF 之后又扩了 23 个形态，用**纯自然语言输入**在三宿主（ai
 | tridiag | 串行依赖线性求解(Thomas) | 1.27 / 9.80 | 稳赢(反向=解伴随) |
 | cholesky | 稠密分解(挑战 cuSOLVER) | 0.31(厂商库墙) / 1.25 | 厂商库墙(前向)/反向真赢 |
 | dynamic_grid_evolution | 2D数据依赖stencil+动态门控 | 4.63 / 5.26 | 稳赢(gather式反向消atomic) |
+| integral_image | 2D前缀和/积分图(scan升2D) | 2.89 / 1.32 | 稳赢(ILP流水前向翻盘) |
 
 **五光谱区间**：**稳赢区**（距离/scan/卷积/SSM/间接寻址/点积/大 reduce/数据依赖采样/变长分段——手写融合空间大 或 用了 autograd 不知道的解析结构）· **擦线区**（小 reduce 归一化前向如 LayerNorm/welford/temperature_softmax——torch.compile 已近最优，1.05~1.10 抖动、多规模易掉，须计算主导区 3 连复验）· **宿主分层区**（融合密集如 attention/scatter/topk/GEMM——kernel 实现力或基线诚实度决定成败，常仅最强宿主 codex 拿下）· **带宽墙区**（纯访存低算术强度前向如 maxpool/geglu/l2norm——candidate 访存量=baseline、都达峰值带宽，三宿主一致过不了，算法本征无前向优化空间，非 skill/agent 失败）· **厂商库墙区**（前向 baseline 就是 NVIDIA 厂商成品如 cholesky=cuSOLVER——手写分块极难赢厂商库，认边界+手写尽力+诚实报）。**带宽墙/厂商库墙的反向常仍能赢**（有 Jacobian/散回/解析 Φ 算子/伴随系统等结构）。
 
@@ -76,7 +77,7 @@ RBF 之后又扩了 23 个形态，用**纯自然语言输入**在三宿主（ai
 | `notebooks/` | Colab 驱动 notebook（clone/pull + 装依赖 + 运行入口） |
 | `scripts/` | 通用脚本（如 `probe_env.py` 环境探测） |
 
-已验证的 case（**24 形态**，覆盖归约/矩阵乘/scan/卷积/位置编码/数据依赖写/间接寻址/点积/分组归约/逐元素融合链/空间采样/变长分段/线性求解/稠密分解/2D数据依赖stencil等维度，framework 零改动即支持每一个）：`rbf` · `layernorm` · `softmax_ce` · `scan` · `gemm_bias_gelu` · `online_softmax`（§12 有实测，未 collect 成 case 目录）· `rope` · `linear_ssm` · `welford` · `causal_attn` · `conv1d` · `gated_ssm` · `scatter_add` · `topk` · `maxpool` · `spmv` · `cosine_sim` · `temperature_softmax` · `l2norm_scale` · `groupnorm` · `geglu` · `gridsample` · `segment_softmax` · `tridiag` · `cholesky` · `dynamic_grid_evolution`。三宿主（aider/gptme/codex）逐形态对照与结论见 [`skill/AGENT_TEST_MATRIX.md`](skill/AGENT_TEST_MATRIX.md)。
+已验证的 case（**25 形态**，覆盖归约/矩阵乘/scan/卷积/位置编码/数据依赖写/间接寻址/点积/分组归约/逐元素融合链/空间采样/变长分段/线性求解/稠密分解/2D数据依赖stencil/2D前缀和等维度，framework 零改动即支持每一个）：`rbf` · `layernorm` · `softmax_ce` · `scan` · `gemm_bias_gelu` · `online_softmax`（§12 有实测，未 collect 成 case 目录）· `rope` · `linear_ssm` · `welford` · `causal_attn` · `conv1d` · `gated_ssm` · `scatter_add` · `topk` · `maxpool` · `spmv` · `cosine_sim` · `temperature_softmax` · `l2norm_scale` · `groupnorm` · `geglu` · `gridsample` · `segment_softmax` · `tridiag` · `cholesky` · `dynamic_grid_evolution` · `integral_image`。三宿主（aider/gptme/codex）逐形态对照与结论见 [`skill/AGENT_TEST_MATRIX.md`](skill/AGENT_TEST_MATRIX.md)。
 
 ## 挂到宿主 agent（通用性）
 

@@ -21,7 +21,7 @@
 
 ## 五类形态 → 归类的 case（对应 SKILL "形态分类 + 能否赢判据"总纲）
 
-- **稳赢区**（访存更少 或 解析结构）：rbf(距离)、cosine_sim(点积 2.12)、softmax_ce(exp规约 1.35)、GroupNorm(大分组reduce 1.28~1.40)、scan/linear_ssm/gated_ssm(cumsum/O(T)递推)、conv1d(4.78/1.86)、spmv(间接寻址 5.97/2.48)、gridsample(数据依赖采样 2.11/2.26)、segment_softmax(变长分段 1.34/2.12)、geglu(逐元素融合链**反向** 2.36)、tridiag(线性求解**反向**=解伴随 1.27/9.80)、cholesky(**反向**=Φ算子 反 1.25)。
+- **稳赢区**（访存更少 或 解析结构）：rbf(距离)、cosine_sim(点积 2.12)、softmax_ce(exp规约 1.35)、GroupNorm(大分组reduce 1.28~1.40)、scan/linear_ssm/gated_ssm(cumsum/O(T)递推)、conv1d(4.78/1.86)、spmv(间接寻址 5.97/2.48)、gridsample(数据依赖采样 2.11/2.26)、segment_softmax(变长分段 1.34/2.12)、geglu(逐元素融合链**反向** 2.36)、tridiag(线性求解**反向**=解伴随 1.27/9.80)、cholesky(**反向**=Φ算子 反 1.25)、dynamic_grid_evolution(2D数据依赖stencil+gather反向 4.63/5.26)、integral_image(2D前缀和 前2.89/反1.32；前向靠 ILP 4行流水翻盘——初版单线程串行沿H仅0.81~1.0，改流水后0.99→2.89，是"打不过先别认①本征、多为②实现力"的活教材)。
 - **擦线区**（小 reduce）：LayerNorm/RMSNorm(D~1K)/l2norm/welford/temperature_softmax 前向。float4+寄存器缓存或擦 1.0~1.1，多规模易掉，须 3 连 + 计算主导区验。
 - **带宽墙区**（纯访存低算术强度前向）：maxpool 前向(读4写1，三宿主 1.03/0.998/1.02)、geglu 前向(逐元素)、小 reduce 归一化前向。反向常仍可赢。
 - **厂商库墙区**（前向 baseline 是 NVIDIA 厂商成品）：cholesky 前向(cuSOLVER potrf，手写分块 0.31×)。反向若有解析结构（Φ 算子）仍可能小胜(cholesky 反 1.25)。

@@ -1062,3 +1062,16 @@ gptme 走**路径 A 半自动**（WSL 产码不自测 → base64 打包 → Cola
 **③ A100 实测（计算主导区）**：verify 5 种子 PASS（前 ~1.8e-7、反 dE ~7e-7）；bench **DGE_SIZE=4096 前 4.63×/反 5.26×**（baseline 前 1.61ms/反 1.52ms 非短核；DGE_SIZE=2048 时 baseline<1ms 短核，前 4.14/反 4.24 被 bench 短核自检警告，放大**不降反升**=真达标非虚高）。**稳赢区**：数据依赖 stencil 算术强度够（每点 9 次 sigmoid+乘加），前反向都大幅真赢。
 
 **collected**：codex 版收进主仓 `cases/dynamic_grid_evolution/`（shared tile 前向 + gather 式反向消 atomic + 零填充 3×3 stencil reference；前 4.63/反 5.26 真达标）。check_reference CLEAN。**收录理由：相关度中低（新组合维度）+ 实现有新思路（gather 式 stencil 反向消 atomic），符合"相关性小且有新思路则收"标准。** 也是 codex 端到端第 2 个成功产出（继 §37 LayerNorm 反向翻墙）。
+
+
+## 42. 阶段 12：integral_image（2D 前缀和/积分图，第 25 形态）+ ILP 流水让前向从"打不过"翻盘
+
+24 形态维度盘点后，scan 家族只有 1D，**2D 前缀和是维度真空白**（图像积分图，O(1) 求任意矩形区域和）。Claude Code 宿主从纯自然语言产码（确认闸门规格：`S[i,j]=Σ_{p≤i,q≤j}X[p,q]`，反向 `dX=dS 的 2D 后缀和`）。
+
+**① 达标结果（A100 计算主导区）**：IMG_SIZE=4096 **前 2.89×/反 1.32×**、8192 前 1.58×/反 1.35×（都稳过）。前向：行扫描（一 block 一行，块内两级 Hillis-Steele）+ 列扫描（沿 H）；反向镜像（行后缀 + 列自下而上后缀）。相对 torch.compile 两次 `cumsum`（读写 X 两遍）的融合少趟优势。
+
+**② 关键教训——ILP 流水让前向从"打不过"翻盘（类别② vs ①的活教材）**：初版列扫描"一线程一列、串行沿 H 累加"实测前向 **0.81~1.0×**（打不过 torch cumsum，放大更差，一度像"torch scan 已最优的准带宽墙"）。诊断：单元素 `load→加→store` 有依赖链延迟、单列内零并行。改成**每线程 4 行流水**（4 个独立 load 同时在飞行、掩盖依赖延迟 + 提 ILP）后前向 **0.99→2.89× 大赢**。**这正印证刚沉淀的三分归因：前向打不过先别急着认①本征边界，很多是②实现力/没优化够——试对优化（这里是 ILP）就翻盘。** 若初版就认输记"带宽墙"，会误判成本征边界。
+
+**③ verify 浮点累加擦线（非逻辑错）**：2D 前缀和累加 H·W 个 randn，float32 累加误差随规模涨——IMG_SIZE=1024 dX_err 1.1e-3、2048 7.3e-3（PASS）、4096 1.3e-2（擦破 atol=1e-2 FAIL）。小规模 1e-4 证逻辑正确。**处置**：config 默认 2048（verify 稳过），bench.env 用 IMG_SIZE=4096（计算主导区）。这是"大规模纯累加算子"的固有特性，非 kernel 错——记之，同类（大 reduce 求和）注意默认 verify 规模别取到浮点擦线区。
+
+**collected**：Claude Code 版收进主仓 `cases/integral_image/`（行/列两级扫描前向 + ILP 4 行流水 + 镜像后缀反向；前 2.89/反 1.32 真达标）。check_reference CLEAN。**FFT 不做**：baseline=cuFFT 厂商库墙，结论与 cholesky 重复（前向墙/反向或小赢）、边际价值低。**本形态数学规格已交付用户拿去驱动三宿主对照。**
