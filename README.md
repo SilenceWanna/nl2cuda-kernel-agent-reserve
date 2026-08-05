@@ -54,7 +54,7 @@ RBF 之后又扩了 24 个形态，用**纯自然语言输入**在三宿主（ai
 | tridiag | 串行依赖线性求解(Thomas) | 1.27 / 9.80 | 稳赢(反向=解伴随) |
 | cholesky | 稠密分解(挑战 cuSOLVER) | 0.31(厂商库墙) / 1.25 | 厂商库墙(前向)/反向真赢 |
 | dynamic_grid_evolution | 2D数据依赖stencil+动态门控 | 4.63 / 5.26 | 稳赢(gather式反向消atomic) |
-| integral_image | 2D前缀和/积分图(scan升2D) | 2.89 / 1.32 | 稳赢(ILP流水前向翻盘) |
+| integral_image | 2D前缀和/积分图(scan升2D) | 4.90 / 5.97 | 稳赢(前向需并行/流水优化) |
 
 **五光谱区间**：**稳赢区**（距离/scan/卷积/SSM/间接寻址/点积/大 reduce/数据依赖采样/变长分段——手写融合空间大 或 用了 autograd 不知道的解析结构）· **擦线区**（小 reduce 归一化前向如 LayerNorm/welford/temperature_softmax——torch.compile 已近最优，1.05~1.10 抖动、多规模易掉，须计算主导区 3 连复验）· **宿主分层区**（融合密集如 attention/scatter/topk/GEMM——kernel 实现力或基线诚实度决定成败，常仅最强宿主 codex 拿下）· **带宽墙区**（纯访存低算术强度前向如 maxpool/geglu/l2norm——candidate 访存量=baseline、都达峰值带宽，三宿主一致过不了，算法本征无前向优化空间，非 skill/agent 失败）· **厂商库墙区**（前向 baseline 就是 NVIDIA 厂商成品如 cholesky=cuSOLVER——手写分块极难赢厂商库，认边界+手写尽力+诚实报）。**带宽墙/厂商库墙的反向常仍能赢**（有 Jacobian/散回/解析 Φ 算子/伴随系统等结构）。
 

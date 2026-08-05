@@ -1,10 +1,8 @@
-"""integral image case：暴露 CASE 实例供 framework 使用。"""
-
 import os
 
 from framework.case import Case
 from cases.integral_image import config
-from cases.integral_image.reference import reference_forward, make_inputs
+from cases.integral_image.reference import make_inputs, reference_forward
 
 
 def _load_description():
