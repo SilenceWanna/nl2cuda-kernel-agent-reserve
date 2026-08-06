@@ -58,8 +58,14 @@ export PATH="$PATH:/c/Windows/System32"
 
 echo "[cleanroom] clone $REPO → $DIR" >&2
 rm -rf "$DIR"
-git clone -q "$REPO" "$DIR" || { echo "[cleanroom] clone 失败" >&2; exit 1; }
+git clone -q --depth 1 "$REPO" "$DIR" || { echo "[cleanroom] clone 失败" >&2; exit 1; }
 cd "$DIR" || exit 1
+
+# ---- 封存 git 历史（否则 agent 可 git log -p / git show 从旧提交还原目标 case 的完整实现，等于开卷）----
+#      弃掉 clone 带来的全部历史与 origin，重建为无历史的空仓；后面在此之上 commit 净化后的空状态，
+#      使 HEAD 与历史都不含答案，agent 无论怎么 git 操作都还原不出。
+rm -rf .git
+git init -q
 
 # 目标 case 必须存在
 [ -d "cases/$CASE" ] || { echo "[cleanroom] cases/$CASE 不存在" >&2; exit 1; }
@@ -69,18 +75,30 @@ cd "$DIR" || exit 1
 #      MULTIAGENT_TEST_RESULTS.md 记录各宿主对某 case 的测试结果/性能。三者都含"某 case 用什么手段达到多少
 #      加速比"，agent 读到=开卷考。SKILL 正文只留通用原理，保留。
 rm -f skill/AGENT_TEST_MATRIX.md skill/CASE_EVIDENCE.md skill/MULTIAGENT_TEST_RESULTS.md
+# 工作计划.md（进度日志逐 case 记录解法/性能/优化手段）+ 工作目标.md（私有）——同属逐 case 答案泄露源，删。
+rm -f 工作计划.md 工作目标.md
 
-# ---- 2+5. 清空所有 case 的实现（含目标 case）；只保留 description.md ----
-#      预建空的同名文件（解某些 agent 的 file-not-found 写盘卡顿），kernel 文件按原名预建空。
+# ---- 2+5. 精简 cases/：只留【目标 case】(留 description、清空实现) + 【rbf】(完整,作结构模板) ----
+#      其余所有非目标、非 rbf 的 case 目录**整删**——它们的 description 可能含解法公式（如 cholesky 的
+#      Φ 算子/伴随公式）、其实现可被抄近邻结构，对目标 case 测试是纯泄露面，删干净最省心。
+#      rbf 保留完整：它是 SKILL/CLAUDE 明示的"照 cases/rbf/__init__.py 写 Case(...)"结构模板，且 rbf
+#      （成对距离）与任何目标算法都不同，看它的实现无法抄出目标解法，不构成答案泄露。
+#      目标 case：清空 reference/config/__init__/op/kernels（预建 0 字节解 file-not-found 卡顿），只留 description.md。
 for cdir in cases/*/; do
   c="$(basename "$cdir")"
-  for f in reference.py config.py __init__.py op.py; do
-    [ -e "$cdir$f" ] && : > "$cdir$f"
-  done
-  if [ -d "$cdir/kernels" ]; then
-    for cu in "$cdir"kernels/*.cu; do
-      [ -e "$cu" ] && : > "$cu"
+  if [ "$c" = "$CASE" ]; then
+    for f in reference.py config.py __init__.py op.py; do
+      [ -e "$cdir$f" ] && : > "$cdir$f"
     done
+    if [ -d "${cdir}kernels" ]; then
+      for cu in "${cdir}"kernels/*.cu; do
+        [ -e "$cu" ] && : > "$cu"
+      done
+    fi
+  elif [ "$c" = "rbf" ]; then
+    :   # 保留完整 rbf 作结构模板
+  else
+    rm -rf "$cdir"
   fi
 done
 
@@ -118,13 +136,18 @@ FAIL=0
 [ -f skill/AGENT_TEST_MATRIX.md ] && { echo "  ✗ AGENT_TEST_MATRIX.md 仍在" >&2; FAIL=1; }
 [ -f skill/CASE_EVIDENCE.md ] && { echo "  ✗ CASE_EVIDENCE.md 仍在" >&2; FAIL=1; }
 [ -f skill/MULTIAGENT_TEST_RESULTS.md ] && { echo "  ✗ MULTIAGENT_TEST_RESULTS.md 仍在" >&2; FAIL=1; }
+[ -f 工作计划.md ] && { echo "  ✗ 工作计划.md 仍在（进度日志逐 case 记录解法/性能）" >&2; FAIL=1; }
+[ -f 工作目标.md ] && { echo "  ✗ 工作目标.md 仍在" >&2; FAIL=1; }
 [ -s "cases/$CASE/reference.py" ] && { echo "  ✗ 目标 case reference 非空" >&2; FAIL=1; }
-# 泄露关键词扫描：SKILL.md 正文只留通用原理（不点 case 名 + 不给完整公式/性能），允许保留；
-# 本脚本自身的注释/检测正则含这些关键词（作匹配模式与说明，非某 case 的答案），排除；
-# 其余任何文件含"完整解法公式/精确性能数字"即泄露源残留。
-LEAK="$(git grep -liE 'grad_A=|L⁻ᵀ|Phi\(L|解伴随系统 Aᵀ|反 1\.25|前 0\.31|9\.80' -- . ':!skill/SKILL.md' ':!skill/scripts/prepare_cleanroom.sh' 2>/dev/null || true)"
+# 泄露判定用**结构性检查**而非数字正则：达标线 "1.05×"、rbf 参考值 "1.10×" 等是**合规方法论**，
+# 必须保留，与某 case 的答案性能数字无法靠"含小数"区分（旧数字正则误杀 14 个方法论文件）。
+# 逐 case 答案本就集中在上面已删的文件（矩阵/证据附录/工作计划/工作目标）+ 各 case 实现里，
+# 故只要"答案文件已删 + 所有实现清空 + delivery 删除 + 无非空 kernel"即干净。
+# 下面再加一道**窄**的已知解法公式扫描（仅高辨识度、不会出现在方法论正文的完整公式片段）作纵深防御：
+LEAK="$(git grep -liE 'grad_A=|L⁻ᵀ|Phi\(L|解伴随系统 Aᵀ' -- . ':!skill/SKILL.md' ':!skill/scripts/prepare_cleanroom.sh' 2>/dev/null || true)"
 [ -n "$LEAK" ] && { echo "  ✗ 仍有文件含完整解法/性能泄露: $LEAK" >&2; FAIL=1; }
-NONEMPTY_IMPL="$(find cases -name '*.cu' -not -path '*/delivery/*' -size +0c 2>/dev/null | head -3)"
+# 非空 kernel 检查：目标 case 已清空；rbf 作结构模板**有意保留完整**（不同算法，非答案），故豁免 rbf。
+NONEMPTY_IMPL="$(find cases -name '*.cu' -not -path '*/delivery/*' -not -path 'cases/rbf/*' -size +0c 2>/dev/null | head -3)"
 [ -n "$NONEMPTY_IMPL" ] && { echo "  ✗ 仍有非空 kernel: $NONEMPTY_IMPL" >&2; FAIL=1; }
 if [ "$FAIL" = 0 ]; then
   echo "  ✓ 泄露源已清：矩阵+证据附录删除、所有 case 实现清空、delivery 删除、README 中性化" >&2
