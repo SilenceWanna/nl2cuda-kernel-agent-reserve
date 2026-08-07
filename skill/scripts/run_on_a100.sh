@@ -20,10 +20,14 @@
 # VERDICT 文法：PASS · PASS_SCALE_SUSPECT（擦线达标但放大规模掉破1.05=规模挑选嫌疑，strict下算未达标）· VERIFY_FAIL · BENCH_FAIL · CV_INVALID · FRAMEWORK_DIRTY · SSH_ERROR
 set -uo pipefail
 
-# ---- 双跳 SSH 目标（内联，勿写进 ~/.ssh/config）----
+# ---- 双跳 SSH 目标（真实值放本地未跟踪配置/环境变量，勿写进仓库；未设时用占位默认，需自行覆盖）----
+#   在 ~/.ssh/config 外内联；本地设 NL2CUDA_JUMP / NL2CUDA_GPUBOX / NL2CUDA_KEY（或 source 一个 gitignore 的配置文件）。
+#   若存在 skill/scripts/.nl2cuda_env（gitignore、不进仓库），自动读入真实连接参数。
+_CONF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.nl2cuda_env"
+[ -f "$_CONF" ] && . "$_CONF"
 KEY="${NL2CUDA_KEY:-$HOME/.ssh/nl2cuda_gpu}"
-JUMP="user@jump.example.internal"
-GPUBOX="user@gpu.example.internal"
+JUMP="${NL2CUDA_JUMP:-user@jump.example.internal}"
+GPUBOX="${NL2CUDA_GPUBOX:-user@gpu.example.internal}"
 
 ssh_a100() {   # 双跳 SSH 包装：$@ 为远程命令；stdin 透传（供 heredoc / tar）
   # ServerAlive*：远程无响应（网络断/跳板挂）时 ~180s 后主动断开，不让本地 ssh 无限阻塞。

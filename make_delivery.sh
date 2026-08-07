@@ -18,7 +18,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$SCRIPT_DIR"                                   # 本仓库根
-DEFAULT_PUSH_REPO="https://github.com/SilenceWanna/nl2cuda-kernel-agent-skill.git"
+DEFAULT_PUSH_REPO="git@coding.jd.com:ads-model-example/nl2cuda-kernel-skill.git"
 
 # ---- 参数（位置参数=目标目录；--push/--repo 为可选 flag）----
 DEST=""
@@ -78,23 +78,31 @@ rm -rf "$DEST"; mkdir -p "$DEST"
 MISS=0
 for p in "${INCLUDE_DIRS[@]}" "${INCLUDE_FILES[@]}"; do copy_one "$p" || MISS=1; done
 
-# ---- 改写仓名：开发仓源文件里 clone URL/目录名/标题是旧仓名 nl2cuda-kernel-agent（开发仓自己叫这个名合理），
-#      但交付物要指向交付仓 nl2cuda-kernel-agent-skill，否则用户照 USAGE clone 会（经 GitHub 改名重定向）
-#      拿到开发/自测仓 reserve（含私有内容）。故在交付副本上全局改写（E2E #7）。
-#      负向断言 (?!-) 保证不误伤已带后缀的名字（-skill/-reserve），幂等可重跑。
-DELIVERY_REPO_SLUG="nl2cuda-kernel-agent-skill"
+# ---- 改写仓地址：开发仓源文件里 clone URL/目录名/标题是旧仓名 nl2cuda-kernel-agent（开发仓自己叫这个名合理），
+#      但交付物要指向交付仓 coding.jd.com 的 cuda-agent-skill。三段改写（顺序敏感）：
+#        ① 完整 clone URL（github https，裸名或 -skill 变体）→ coding SSH 全地址；
+#        ② 残留的 -skill 显式引用 → 交付目录名 cuda-agent-skill；
+#        ③ 残留的裸名（cd 目录名/标题）→ cuda-agent-skill。
+#      ②先于③：否则③的裸名正则会把 nl2cuda-kernel-agent-skill 前缀改成 cuda-agent-skill-skill。
+DELIVERY_REPO_URL="git@coding.jd.com:ads-model-example/nl2cuda-kernel-skill.git"
+DELIVERY_DIR_NAME="nl2cuda-kernel-skill"
 find "$DEST" -type f \( -name '*.md' -o -name '*.ipynb' -o -name '*.py' -o -name '*.sh' -o -name '*.txt' \) -print0 \
   | while IFS= read -r -d '' f; do
-      python - "$f" "$DELIVERY_REPO_SLUG" <<'PYEOF'
+      python - "$f" "$DELIVERY_REPO_URL" "$DELIVERY_DIR_NAME" <<'PYEOF'
 import re, sys
-path, slug = sys.argv[1], sys.argv[2]
+path, url, dirname = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(path, encoding="utf-8") as fh:
     txt = fh.read()
-# 把裸旧名 nl2cuda-kernel-agent（其后不是 - 连字符，即未带 -skill/-reserve 后缀）改成交付仓名
-new = re.sub(r"nl2cuda-kernel-agent(?!-)", slug, txt)
-if new != txt:
+orig = txt
+# ① 完整 clone URL（裸名或 -skill）→ coding SSH 全地址
+txt = re.sub(r"https://github\.com/SilenceWanna/nl2cuda-kernel-agent(?:-skill)?\.git", url, txt)
+# ② 残留的 -skill 显式引用 → 交付目录名
+txt = re.sub(r"nl2cuda-kernel-agent-skill", dirname, txt)
+# ③ 残留的裸名（其后非连字符，避免误伤已处理的复合名）→ 交付目录名
+txt = re.sub(r"nl2cuda-kernel-agent(?!-)", dirname, txt)
+if txt != orig:
     with open(path, "w", encoding="utf-8") as fh:
-        fh.write(new)
+        fh.write(txt)
 PYEOF
     done
 
@@ -115,6 +123,10 @@ for c in nb.get("cells", []):
     is_layernorm_md = c.get("cell_type") == "markdown" and ("layernorm" in src.lower() or "LayerNorm" in src)
     if is_nonrbf_code or is_layernorm_md:
         continue
+    # 去掉 rbf 冒烟注释里的样例实测加速比数字（交付物不出现验证结果数字）
+    if c.get("cell_type") == "code":
+        c["source"] = [re.sub(r"冒烟：加速比（rbf[^）]*）", "冒烟：跑通计时基准即可", ln)
+                       for ln in c.get("source", [])]
     kept.append(c)
 nb["cells"] = kept
 json.dump(nb, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
@@ -199,8 +211,9 @@ if [ "$DO_PUSH" = "1" ]; then
     git init -q
     git checkout -q -b main
     git add -A
-    git -c user.name="nl2cuda-delivery" -c user.email="delivery@localhost" -c commit.gpgsign=false \
-        commit -q -m "nl2cuda-kernel-agent (skill 交付版) — 从开发仓净化生成的通用交付版，使用见 USAGE.md"
+    # commit 作者用推送者本人的 git 全局身份（user.name/user.email）；须先 git config 配好，否则 commit 报错。
+    git -c commit.gpgsign=false \
+        commit -q -m "feat:优化readme文件"
     git remote add origin "$PUSH_REPO"
     git push -f -u origin main
   ) || { echo "[make_delivery] ✗ 推送失败" >&2; exit 1; }

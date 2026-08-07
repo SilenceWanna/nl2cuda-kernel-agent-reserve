@@ -62,6 +62,9 @@ LINE_RULES = [
      "与 `python skill/scripts/bench_case.py --case <name>`（前反向各 ≥1.05× torch.compile 才达标）。"),
     # ---- README.md（项目对外文档，一条加固 bullet 提了作者脚本）----
     ("README.md",
+     "> 交付物是 **skill（方法论 + 工具）**，不是从零构建的 agent。详见 [工作目标.md](工作目标.md)（任务契约）与 [工作计划.md](工作计划.md)（执行清单）。",
+     "> 交付物是 **skill（方法论 + 工具）**，不是从零构建的 agent。"),
+    ("README.md",
      "- **评测鲁棒性加固**：`run_on_a100.sh --auto-scale` 自适应放大到\"计算主导区\"（补短核假象）+ 规模敏感复测（擦线 PASS 放大掉破 1.05 判 `PASS_SCALE_SUSPECT`）+ `check_reference.py` 静态扫危险写法（补弱 baseline + kernel 嵌套重算 + 直调厂商库成品）+ 防作弊红线 §1-5 + 擦线 3 连稳定判据 + 驱动器健壮性（tar 自动回退 System32 bsdtar 绕杀软拦截 + 远程执行墙钟超时防 WSL 冻结）。",
      "- **评测鲁棒性加固**：自测应选\"计算主导区\"规模（baseline ≥1ms）避短核假象 + 擦线 PASS 换 ×2/×4 规模复测防规模挑选 + `check_reference.py` 静态扫危险写法（补弱 baseline + kernel 嵌套重算 + 直调厂商库成品）+ 防作弊红线 §1-5 + 擦线 3 连稳定判据。"),
     # ---- CLAUDE.md ----
@@ -97,10 +100,27 @@ LINE_RULES = [
      "> （据此五类先归类你的算法，再定优化预期与策略。）"),
     # 注：原第 3 条 SKILL CASE_EVIDENCE dead-link 规则（"判达标...具体翻车实测见 CASE_EVIDENCE"）已随
     # §37 LayerNorm 反向结论修正把该行改写为不含 CASE_EVIDENCE 引用，故删除该规则（否则 drift 报错）。
-    # ---- README.md：去掉指向内部测试矩阵的悬空引用 ----
+    # ---- README.md：删掉"已验证的 case（25 形态…三宿主…见 AGENT_TEST_MATRIX）"整段（过程性 + 悬空引用）----
     ("README.md",
      "。三宿主（aider/gptme/codex）逐形态对照与结论见 [`skill/AGENT_TEST_MATRIX.md`](skill/AGENT_TEST_MATRIX.md)。",
-     "。均以纯自然语言输入在多个宿主 agent 上验证过 skill 的通用性。"),
+     None),
+    # ---- README.md：交付仓走内网 SSH 仓，Colab（外网）访问不了 coding.jd.com，"快速开始（在 Colab）"标题改中性 ----
+    ("README.md", "## 快速开始（在 Colab）", "## 快速开始"),
+    # ---- framework/protocol.py：去掉指向"工作目标"（交付仓无此文档）的注释引用，改自包含描述 ----
+    ("framework/protocol.py",
+     "对应工作目标第五节计时协议 + 第三节正确性判据的通用部分。",
+     "定义跨所有 case 统一的计时协议与正确性判据的通用部分。"),
+    # ---- cases/rbf/delivery：删样例的 A100 实测加速比数字（交付物不出现验证结果数字）----
+    ("cases/rbf/delivery/rbf_kernels.cu",
+     "// （已在 A100 上验收：前向 1.10×、反向 1.17× 超过 torch.compile，正确性全 PASS）。",
+     "// （fp32，无 fast-math，无高层算子落回；正确性以 CPU 参考对拍。）"),
+    ("cases/rbf/delivery/rbf_test.cu",
+     "// A100 上已验收（前向1.10×/反向1.17×、正确性全PASS）的版本逐字一致。",
+     "// 与 PyTorch 参考实现逐字一致的独立编译版本。"),
+    # ---- USAGE.md：去掉冒烟注释里的 rbf 样例实测加速比数字（交付物不出现验证结果数字）----
+    ("USAGE.md",
+     "python skill/scripts/bench_case.py  --case rbf   # 冒烟：加速比（rbf 参考前~1.10×/反~1.17×）",
+     "python skill/scripts/bench_case.py  --case rbf   # 冒烟：跑通计时基准即可"),
 ]
 
 # 兜底：改写后交付物里绝不允许残留的作者私有自测词。
@@ -110,6 +130,22 @@ FORBIDDEN = [
     r"\.aider\.conf", r"start_gptme", r"prepare_cleanroom", r"11\.91\.", r"11\.127\.",
     # 内部测试记录/附录：交付物不含，去掉指向它们的悬空引用
     r"AGENT_TEST_MATRIX", r"CASE_EVIDENCE", r"MULTIAGENT_TEST_RESULTS",
+]
+
+# 每条块规则：(文件相对路径, 起始锚点 start, 终止锚点 stop)
+#   删除从"首个含 start 的行"起、到"其后首个含 stop 的行"止（stop 行**保留不删**）的整段。
+#   用于删掉交付物不该出现的成段"训练/验证过程"内容（形态光谱、验收结果、开发环境等），
+#   开发仓源文件保留完整、只在交付副本上删段。start 找不到 → drift 报错退出。
+BLOCK_RULES = [
+    # README.md：交付仓只讲功能，删三段过程性内容（开发仓 README 保留完整复盘）。
+    # ① "验收用例与结果"整节 → 到"25 形态光谱"标题前
+    ("README.md", "## 验收用例与结果", "## 25 形态光谱"),
+    # ② "25 形态光谱"（形态表+五光谱+核心结论）→ 到"两层架构"功能说明前（目录表保留）
+    ("README.md", "## 25 形态光谱", "两层架构："),
+    # ③ "开发 / 验收环境"（开发过程叙述）→ 到"快速开始"前
+    ("README.md", "## 开发 / 验收环境", "## 快速开始"),
+    # rbf 样例交付说明：删"验收结果（A100 实测加速比表）"整节 → 到"合规声明"前
+    ("cases/rbf/delivery/README.md", "## 验收结果", "## 合规声明"),
 ]
 
 
@@ -149,6 +185,32 @@ def sanitize(dest_root):
 
     if errors:
         print("[sanitize] ✗ 规则失效（drift）——请更新 _sanitize_for_delivery.py 的规则：", file=sys.stderr)
+        for e in errors:
+            print("   " + e, file=sys.stderr)
+        return 1
+
+    # ---- 块删除：删掉交付物不该出现的成段"训练/验证过程"内容 ----
+    for rel, start, stop in BLOCK_RULES:
+        path = os.path.join(dest_root, rel)
+        if not os.path.exists(path):
+            errors.append(f"[block] 目标文件不存在: {rel}")
+            continue
+        with open(path, encoding="utf-8") as f:
+            lines = f.readlines()
+        s = next((i for i, l in enumerate(lines) if start in l), None)
+        if s is None:
+            errors.append(f"[block-drift] {rel}: 起始锚点未命中: {start[:40]}")
+            continue
+        e = next((j for j in range(s + 1, len(lines)) if stop in lines[j]), None)
+        if e is None:
+            errors.append(f"[block-drift] {rel}: 终止锚点未命中: {stop[:40]}")
+            continue
+        del lines[s:e]  # 删 [start行, stop行) — stop 行保留
+        with open(path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+
+    if errors:
+        print("[sanitize] ✗ 块规则失效（drift）——请更新 BLOCK_RULES：", file=sys.stderr)
         for e in errors:
             print("   " + e, file=sys.stderr)
         return 1

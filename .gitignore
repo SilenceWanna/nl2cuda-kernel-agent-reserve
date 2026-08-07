@@ -55,3 +55,9 @@ tmp/
 .aider.tags.cache.v*/
 .aider*
 !.aider.conf.yml
+
+# 本地私有连接参数(内网IP/用户名),绝不进仓库
+skill/scripts/.nl2cuda_env
+.nl2cuda_env
+gpu-info.md
+.git-replace-secrets.txt
