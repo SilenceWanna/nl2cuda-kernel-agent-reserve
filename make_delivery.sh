@@ -45,8 +45,7 @@ done
 #  cases/rbf/       唯一保留的完整样例 case（agent 复制它作模板；含 delivery 独立编译成品样例）
 #  约定文件/依赖/入口/说明书
 INCLUDE_FILES=(
-  "skill/SKILL.md" "skill/DESIGN.md" "skill/loop.md"
-  "skill/USING_WITH_OTHER_AGENTS.md"
+  "skill/SKILL.md" "skill/loop.md"
   "skill/scripts/verify_case.py" "skill/scripts/bench_case.py"
   "skill/scripts/profile_case.py" "skill/scripts/check_reference.py"
   "AGENTS.md" "CLAUDE.md" "CONVENTIONS.md"
@@ -234,7 +233,7 @@ if [ "$DO_PUSH" = "1" ]; then
     git add -A
     # commit 作者用推送者本人的 git 全局身份（user.name/user.email）；须先 git config 配好，否则 commit 报错。
     git -c commit.gpgsign=false \
-        commit -q -m "sync: 从开发仓净化生成交付版(方法论+framework+rbf样例;README/USAGE见仓库历史)"
+        commit -q -m "feat：将生成可交付cuda纳入闭环"
     git remote add origin "$PUSH_REPO"
     git push -f -u origin main
   ) || { echo "[make_delivery] ✗ 推送失败" >&2; exit 1; }

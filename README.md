@@ -74,7 +74,7 @@ RBF 之后又扩了 25 个形态，用**纯自然语言输入**在多个宿主�
 |------|------|
 | `framework/` | 通用框架（**算法无关**）：`protocol.py` 计时/容差协议、`case.py` Case 协议、`verify.py` 正确性验证、`bench.py` 计时、`loader.py` 编译加载、`smoke.cu` 冒烟。**评测脚本对 agent 只读、进程隔离** |
 | `cases/<name>/` | 算法 case：`__init__.py`(暴露 CASE)、`reference.py` 金标准、`config.py` 形状/参数、`description.md` NL 描述、`kernels/` CUDA kernel、`op.py` autograd 封装；`delivery/` 可独立编译的纯 CUDA 交付版 |
-| `skill/` | 交付的 skill：`DESIGN.md` 设计、`SKILL.md` 方法论、`loop.md` 迭代循环、`scripts/` 通用 CLI（`verify_case.py`/`bench_case.py`/`profile_case.py --case <name>`） |
+| `skill/` | 交付的 skill：`SKILL.md` 方法论、`loop.md` 迭代循环、`scripts/` 通用 CLI（`verify_case.py`/`bench_case.py`/`profile_case.py --case <name>`） |
 | `notebooks/` | Colab 驱动 notebook（clone/pull + 装依赖 + 运行入口） |
 | `scripts/` | 通用脚本（如 `probe_env.py` 环境探测） |
 

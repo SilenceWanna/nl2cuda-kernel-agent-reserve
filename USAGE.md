@@ -34,7 +34,7 @@ cd nl2cuda-kernel-agent
 | 路径 | 作用 | 你会不会改 |
 |------|------|-----------|
 | `framework/` | 算法无关的评测基座（正确性验证 + 计时 + CUDA 编译加载） | **只读，勿改** |
-| `skill/SKILL.md` / `DESIGN.md` / `loop.md` | 方法论主体 / 架构 / 优化迭代循环 | 只读 |
+| `skill/SKILL.md` / `loop.md` | 方法论主体（含架构） / 优化迭代循环 | 只读 |
 | `skill/scripts/{verify,bench,profile,check_reference}_case.py` | 验证 / 计时 / 诊断 / 预检 CLI | 只读 |
 | `cases/rbf/` | 唯一内置完整样例（agent 复制它作结构模板；含 `delivery/` 独立编译成品样例） | 参考 |
 | `AGENTS.md` / `CLAUDE.md` / `CONVENTIONS.md` | agent 启动约定（不同宿主自动读对应文件） | 只读 |
@@ -67,7 +67,7 @@ agent 会（按 `SKILL.md` 流程）：
 > **告诉 agent 你在 Colab 跑**：agent 本地无 GPU、跑不了自测，让它**只写代码不跑测试**（写完列出所有文件即可）。自测由你在阶段二做、把结果贴回给它迭代。
 > **兜底**（agent 没自动读约定文件时，把这段给它）：
 > ```
-> 读 skill/SKILL.md 与 skill/DESIGN.md，严格按其流程和防作弊红线执行；framework/ 只读，cases/rbf/ 是结构范例。
+> 读 skill/SKILL.md，严格按其流程和防作弊红线执行；framework/ 只读，cases/rbf/ 是结构范例。
 > 我的算法：<自然语言描述 + 若有则给 shape/dtype + 对哪些输入求梯度>。我本地无 GPU（在 Colab 测），你只写代码不跑测试。
 > 按 SKILL 步骤 0.5 先推导数学规格呈我确认，再建 cases/<name>/、写前反向 kernel。
 > __init__.py 照 cases/rbf/__init__.py 直接 Case(...) 显式传全字段；config.py 让规模支持 env 覆盖。

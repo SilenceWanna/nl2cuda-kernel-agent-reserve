@@ -24,8 +24,8 @@
 产出两部分给用户：① **结构化数学规格**——前向数学公式/伪代码 + 各输入名字/形状/dtype + 输出 + `grad_inputs` + 标量参数 + **⚠️语义澄清点**（凡自然语言有多种合理解释处，显式列出你采取的解释+备选，如"‘归一化’按 LayerNorm 理解，若要 L2 请指出"）；② 按规范写的 **PyTorch reference.py 代码**。**然后停下等用户确认或修正——用户未确认数学前，不得建 `cases/<name>/`、不得写 kernel**。这是唯一的人类确认闸门（只在数学层一次）；确认后按下面 1→6 **全自动跑完**不再中途停，确认过的数学规格即 `description.md`。
 （若用户已给明确前向公式+shape/dtype **且无多解变体待定**，数学已定，**跳过步骤 0.5**直接下面第 1 步。）
 
-1. **先读 `skill/SKILL.md`**（方法论主体，尤其"Case 协议""CUDA Kernel 实现技巧""防作弊红线""达标判据"）
-   和 `skill/DESIGN.md`、`framework/case.py`。`framework/` 对你**只读**。
+1. **先读 `skill/SKILL.md`**（方法论主体，尤其"架构""Case 协议""CUDA Kernel 实现技巧""防作弊红线""达标判据"）
+   和 `framework/case.py`。`framework/` 对你**只读**。
 2. **命名并建 case**：据算法起一个简短 case 名（如 `layernorm`、`rmsnorm`），建 `cases/<name>/`，
    把用户的算法定义写成 `cases/<name>/description.md`（自然语言 + 前向数学 + shape/dtype + 对哪些输入求梯度）。
    **名字拿不准或可能与已有 case 重名时，先问用户一句**再继续。

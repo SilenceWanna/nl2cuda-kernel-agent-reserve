@@ -15,7 +15,7 @@ description: 把自然语言描述的算法结构（含 shape/dtype）自动实�
 - 用户要求把已有算法"手写成 CUDA kernel 并跑赢 torch.compile"。
 - 用户要求为新算法结构新增一个 case 并走完验收。
 
-## 架构（先读 [DESIGN.md](DESIGN.md)）
+## 架构
 
 两层：
 - `framework/`（**算法无关，对你只读**）：`protocol.py` 计时/容差协议、`case.py` Case 协议、`verify.py` 正确性验证、`bench.py` 计时、`loader.py` 编译加载、`smoke.cu` 冒烟。

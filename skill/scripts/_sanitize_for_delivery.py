@@ -130,6 +130,8 @@ FORBIDDEN = [
     r"\.aider\.conf", r"start_gptme", r"prepare_cleanroom", r"11\.91\.", r"11\.127\.",
     # 内部测试记录/附录：交付物不含，去掉指向它们的悬空引用
     r"AGENT_TEST_MATRIX", r"CASE_EVIDENCE", r"MULTIAGENT_TEST_RESULTS",
+    # DESIGN.md 是开发侧设计文档，不进交付物——交付物任何 .md 不得残留对它的引用（悬空链接）
+    r"DESIGN\.md",
 ]
 
 # 每条块规则：(文件相对路径, 起始锚点 start, 终止锚点 stop)
