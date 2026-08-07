@@ -1095,3 +1095,13 @@ gptme 走**路径 A 半自动**（WSL 产码不自测 → base64 打包 → Cola
 | **aider** | **4.21×** | 5.55× | cumsum，输入 `rand-0.5`（[-0.5,0.5] 均值0） | 一轮达标；自报 3.95/5.44 与复验一致 |
 
 **结论**：integral_image 落**稳赢区**三宿主一致坐实——**不是宿主分层**（三家都真达标，非 attention/scatter 那种仅 codex 拿下），前向并行/流水优化是三家都能想到的通用手法。**三家应对"大规模 fp32 前缀和累加误差"的三条不同诚实路径**：codex/3 对齐累加顺序（误差 0，最优）、aider 用零均值 rand-0.5 让前缀和不发散、gptme 缩放输入压低幅值——都合规（check_reference 三家全 CLEAN、均自然分布未挑病态输入、不碰速度），差异只在正确性工程的巧劲。**宿主环境教训**：gptme 在 Windows 因 `import termios` 崩（Unix-only），须 WSL；aider 经 OpenAI 兼容代理须关 `temperature`（`use_temperature:false`）——推理型模型（GPT-5.4）拒 `temperature=0` 返 400，litellm 默认发 0 故每调必挂。二者均非 skill/算法问题，是宿主-代理适配。
+
+## 43. 扩形态：warp_sparse_contrast（第 26 形态，warp 级稀疏加权聚合 + 双梯度；codex 端到端产出收录）
+
+**动机**：现有 25 形态无 **warp 级映射 + warp 内规约**维度（最近的 spmv 是 CSR 间接寻址无 warp 映射、scatter_add 无 warp 内规约）。warp_sparse_contrast 补上这块：每个逻辑行映射一个 CUDA warp，稀疏值经 `slot_to_nnz`（-1 空槽）间接寻址，前向 `S[g,i]=Σ_j edge_mask·W·T[g,j]`、`R=tanh(S)`，反向对 `T_values` 和 `W` 双梯度。
+
+**规格（确认闸门定稿）**：输入 `T_values[NNZ]` fp32（求梯度）、`slot_to_nnz[G,32]` int64、`W[G,32,32]` fp32（求梯度）、`edge_mask[G,32,32]` bool；输出 `R_values[NNZ]`。默认 `G=4096`、密度 50%/25% 保留自环，`WSC_GROUPS` 覆盖；bench.env 声明 `WSC_GROUPS=65536` 进计算主导区。
+
+**产出与复验（codex 路径 A 端到端，我独立 A100 复验、非信自报）**：codex 在路径 A（Colab）端到端产码，我把产物在 A100 独立复测——`REF_CHECK=CLEAN`（reference 纯向量化 gather/scatter+广播，`make_inputs` 自然 randn/rand 分布未挑病态），**@G=65536 计算主导区：前 4.15×/反 10.90× VERDICT=PASS**（5 种子前反向全 PASS；首测 baseline 前向 CV 7.5% 超阈判 CV_INVALID，换卡复测 CV<5% 坐实——"卡忙计时失真、重测"教训）。kernel 用真 warp 原语（`__shfl_down_sync` warp 规约 + `__shfl_sync` 跨 lane 取值），反向 10.9× 极强源于 warp 内规约省掉 baseline 处理稀疏 gather+scatter+双梯度的大量中间物化。
+
+**归类稳赢区**：反向靠 warp `__shfl` 规约省中间物化（元判据①访存更少）。**注意规模可比性教训**：aider 曾在**默认 G=4096**（未建 bench.env）跑出前 15.9×——candidate 仅 0.06ms 逼近短核区、baseline ~1ms，加速比被小规模摊薄虚高；换 G=65536 计算主导区才是可比真值。**故本形态 bench.env 钉死 WSC_GROUPS=65536**，收录 codex 版。**三宿主**：本形态按"减轮数"策略只做 codex 一宿主端到端 + 独立复验达标，aider/gptme 未逐宿主实测。

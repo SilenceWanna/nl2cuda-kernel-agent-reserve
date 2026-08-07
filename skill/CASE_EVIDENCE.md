@@ -21,7 +21,7 @@
 
 ## 五类形态 → 归类的 case（对应 SKILL "形态分类 + 能否赢判据"总纲）
 
-- **稳赢区**（访存更少 或 解析结构）：rbf(距离)、cosine_sim(点积 2.12)、softmax_ce(exp规约 1.35)、GroupNorm(大分组reduce 1.28~1.40)、scan/linear_ssm/gated_ssm(cumsum/O(T)递推)、conv1d(4.78/1.86)、spmv(间接寻址 5.97/2.48)、gridsample(数据依赖采样 2.11/2.26)、segment_softmax(变长分段 1.34/2.12)、geglu(逐元素融合链**反向** 2.36)、tridiag(线性求解**反向**=解伴随 1.27/9.80)、cholesky(**反向**=Φ算子 反 1.25)、dynamic_grid_evolution(2D数据依赖stencil+gather反向 4.63/5.26)、integral_image(2D前缀和 前4.90/反5.97 codex版；前向需并行/流水优化——单线程串行沿H仅0.81~1.0打不过torch cumsum，做对并行后翻盘，是"打不过先别认①本征、多为②实现力"的活教材；codex三宿主对照:第2次前向擦线1.06自报PASS被独立多规模复验拆穿虚高、第3次重做4.90真达标+误差0)。
+- **稳赢区**（访存更少 或 解析结构）：rbf(距离)、cosine_sim(点积 2.12)、softmax_ce(exp规约 1.35)、GroupNorm(大分组reduce 1.28~1.40)、scan/linear_ssm/gated_ssm(cumsum/O(T)递推)、conv1d(4.78/1.86)、spmv(间接寻址 5.97/2.48)、gridsample(数据依赖采样 2.11/2.26)、segment_softmax(变长分段 1.34/2.12)、geglu(逐元素融合链**反向** 2.36)、tridiag(线性求解**反向**=解伴随 1.27/9.80)、cholesky(**反向**=Φ算子 反 1.25)、dynamic_grid_evolution(2D数据依赖stencil+gather反向 4.63/5.26)、integral_image(2D前缀和 前4.90/反5.97 codex版；前向需并行/流水优化——单线程串行沿H仅0.81~1.0打不过torch cumsum，做对并行后翻盘，是"打不过先别认①本征、多为②实现力"的活教材；codex三宿主对照:第2次前向擦线1.06自报PASS被独立多规模复验拆穿虚高、第3次重做4.90真达标+误差0)、warp_sparse_contrast(warp级稀疏加权聚合+双梯度 前4.15/反10.90 @G=65536 codex版；反向靠warp `__shfl_down_sync`规约省中间物化——baseline处理稀疏gather+scatter+双梯度需大量中间物化，warp内规约一趟吃掉；规模可比教训:默认G=4096下前向虚高15.9×(candidate 0.06ms逼近短核),换65536计算主导区才是真值4.15×，故bench.env钉死65536)。
 - **擦线区**（小 reduce）：LayerNorm/RMSNorm(D~1K)/l2norm/welford/temperature_softmax 前向。float4+寄存器缓存或擦 1.0~1.1，多规模易掉，须 3 连 + 计算主导区验。
 - **带宽墙区**（纯访存低算术强度前向）：maxpool 前向(读4写1，三宿主 1.03/0.998/1.02)、geglu 前向(逐元素)、小 reduce 归一化前向。反向常仍可赢。
 - **厂商库墙区**（前向 baseline 是 NVIDIA 厂商成品）：cholesky 前向(cuSOLVER potrf，手写分块 0.31×)。反向若有解析结构（Φ 算子）仍可能小胜(cholesky 反 1.25)。
