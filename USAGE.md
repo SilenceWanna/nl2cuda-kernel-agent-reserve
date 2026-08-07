@@ -244,25 +244,24 @@ python skill/scripts/profile_case.py   --case <你的算法名>   # ④ 未达�
 
 # 取得 `.cu`（两条路径共用）
 
-达标（或确认边界）后，你的 CUDA kernel 就在：
-```
-cases/<你的算法名>/kernels/*.cu
-```
-这已是可用的 `.cu`。若要一份**不依赖 PyTorch、可独立 `nvcc` 编译**的交付版（像 `cases/rbf/delivery/`），照该样例结构整理（可让 agent 做）：
+达标后，你的 CUDA kernel 在 `cases/<你的算法名>/kernels/*.cu`（PyTorch 运行时用）。
 
-| `cases/rbf/delivery/` 里的文件 | 作用 |
+**agent 达标后会自动生成不依赖 PyTorch、可独立 `nvcc` 编译的交付版**（闭环必做步骤，无需你额外提示），位于 `cases/<你的算法名>/delivery/`，结构照 `cases/rbf/delivery/`：
+
+| 文件 | 作用 |
 |------|------|
-| `rbf_kernels.cu` | 前向+反向 `__global__` kernel + `extern "C"` 裸指针 host 接口（内部管理 device 内存） |
-| `rbf_test.cu` | 自测 harness：内置 CPU 参考对拍 GPU 输出，`allclose` 打印 PASS/FAIL（不依赖 torch） |
+| `<name>_kernels.cu` | 前向+反向 `__global__` kernel + `extern "C"` 裸指针 host 接口（内部管理 device 内存） |
+| `<name>_test.cu` | 自测 harness：内置 CPU 参考对拍 GPU 输出，`allclose` 打印 PASS/FAIL（不依赖 torch） |
 | `Makefile` | `make test` 一键 nvcc 独立编译 + 跑自测；`make ARCH=sm_75 test` 换架构 |
 | `README.md` | 算法说明 + 接口 + 编译运行方式 + 合规声明 |
 
-独立交付版验证（在有 GPU 的环境；Colab 里前面加 `!`）：
+你只需验证一下（在有 GPU 的环境；Colab 里前面加 `!`）：
 ```bash
-cd cases/<你的算法名>/delivery && make test        # 编译 + CPU 对拍，应打印 PASS
+cd cases/<你的算法名>/delivery && make test        # 独立编译 + CPU 对拍，应打印 PASS
 ```
+> 若 `cases/<你的算法名>/delivery/` 不存在，说明 agent 漏了闭环收尾步——让它"照 SKILL.md 步骤 7 生成并 make test 验证独立编译交付版"。
 
-**至此你获得了最终的 `.cu`**，可嵌入你自己的 C++/CUDA 项目。
+**至此你获得了最终的 `.cu`**（`delivery/<name>_kernels.cu`），可嵌入你自己的 C++/CUDA 项目。
 
 ---
 

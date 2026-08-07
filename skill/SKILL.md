@@ -158,8 +158,14 @@ python skill/scripts/bench_case.py --case <name>
 ### 步骤 6：未达标 → 进入优化循环
 若正确但未达速度标，按 [loop.md](loop.md) 迭代：读 profile → 优化（shared-memory tiling / float4 向量化 / warp 原语 / 算子融合 / 前向缓存复用）→ 重新 verify（必须仍全 PASS）→ 重新 bench。每次只改 kernel，不动 framework。
 
-### 步骤 7：交付
-产出可独立编译的 `.cu`（含必要 host 绑定），确认无对 torch 高层算子的运行时依赖。
+### 步骤 7：交付（闭环必做，达标即自动生成，不必等用户额外提示）
+达标（`VERDICT=PASS`）后，照 `cases/rbf/delivery/` 结构在 `cases/<name>/delivery/` 手写四文件，产出**不依赖 PyTorch、可独立 `nvcc` 编译**的交付版：
+- `<name>_kernels.cu`——前向+反向 `__global__` kernel，计算逻辑与 `cases/<name>/kernels/*.cu` **逐字一致**；加 `extern "C"` 裸指针 host 接口（收 `float*` 主机指针，内部管理 device 内存分配/拷贝/launch/同步）。全程 fp32、无 fast-math、无 torch 高层运行时依赖。
+- `<name>_test.cu`——自测 harness：内置 **CPU 参考**对拍 GPU 输出，`allclose` 打印 PASS/FAIL（不依赖 torch）。
+- `Makefile`——`make test` 一键 nvcc 独立编译 + 跑自测；`make ARCH=sm_75 test` 换架构。
+- `README.md`——算法说明 + 接口 + 编译运行方式 + 合规声明（fp32/无 fast-math/未直调等价库成品）。
+
+然后 `cd cases/<name>/delivery && make test` 独立编译跑 CPU 对拍，**须打印 PASS**。**完工判据 = `VERDICT=PASS` 且 delivery `make test` PASS**——二者缺一不算完成。厂商库墙/带宽墙等"诚实报边界"形态也须生成 delivery（手写尽力版 + README 注明边界），其 `make test` 正确性仍须 PASS。
 
 ## CUDA Kernel 实现技巧（提前学习——用户只给朴素算法描述，这些知识靠你自己掌握）
 
@@ -280,7 +286,8 @@ python skill/scripts/bench_case.py --case <name>
   共享/繁忙 GPU 上擦线加速比会在达标线上下抖动，达标应留安全余量（目标 ≥1.10×）而非骑在 1.05 线。
 - **警惕短核假象**：若 baseline 前/反向 <1ms 却给高加速比（1.2×+），多半是固定开销（kernel launch/同步）虚高。**`bench_case.py` 会自动检测**——baseline 前或反向 <1ms 时打印"短核假象警告"、`--emit-verdict` 下判 `VERDICT=SHORT_KERNEL_SUSPECT`（`--strict` 下算未达标），提示你放大规模复测。**对策**：让 config 的规模支持 env 覆盖（`os.environ.get("XXX","默认")`），用大规模复测——如 `RMS_B=262144 python skill/scripts/bench_case.py --case <名>`，把 baseline 抬到 ≥1ms 的计算主导区再判。实测：aider 的 RMSNorm 短核下显示 前1.51/反1.85 "PASS"，放大到 RMS_B=262144 后真实 前0.91/反1.05→2×规模1.04 FAIL——短核假象会把带宽墙包装成达标，务必放大验证。
 - **规模挑选（短核假象的宿主自选变种，禁）**：诚实做法是**固定一个计算主导区规模**（baseline ≥1ms）把 kernel 优化到达标，**禁止从多个规模里挑一个恰好擦线能过的短核规模**（让固定开销撑高加速比）凑 PASS。**判据：加速比强规模依赖**——同一 kernel 换 2×/4× 规模，若擦线侧从 PASS 掉破 1.05（如某前向 384 规模 1.07 PASS，768/1536 掉 1.048/1.035 FAIL），说明优势来自固定开销摊薄而非 kernel 真更快，是**规模挑选**。**对策**：选规模让 baseline 进计算主导区（≥1ms）再优化；换 2×/4× 规模交叉验证，加速比稳（真优势）才算数、放大就掉（短核假象）不算。
-- 两者同时满足即达成。
+- **独立编译交付版（闭环必做）**：达标后须生成 `cases/<name>/delivery/`（见步骤 7）并 `make test` 独立编译（仅 nvcc + CUDA runtime、无 torch）跑 CPU 对拍打印 PASS。
+- 三者同时满足（正确性 + 性能 + delivery `make test` PASS）即达成。
 
 ## 新增一个算法 case
 

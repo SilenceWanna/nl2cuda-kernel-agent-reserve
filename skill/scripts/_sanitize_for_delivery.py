@@ -45,7 +45,7 @@ LINE_RULES = [
      "   （首次加 `--sync-cli`）。它在远程 GPU 跑 verify+bench，末行给 `VERDICT=`。按 `skill/AUTONOMOUS_LOOP.md` 的",
      None),
     ("AGENTS.md",
-     "   VERDICT 决策：`PASS`→交付；`VERIFY_FAIL`→修正确性（不看 bench）；`BENCH_FAIL`→按 `skill/loop.md` 优化未达标侧 kernel；",
+     "   VERDICT 决策：`PASS`→进步骤 6 生成交付版；`VERIFY_FAIL`→修正确性（不看 bench）；`BENCH_FAIL`→按 `skill/loop.md` 优化未达标侧 kernel；",
      "   未达标（前或反向 <1.05×）按 `skill/loop.md` 优化未达标那侧的 kernel（先诊断瓶颈）；正确性未过先修正确性。"),
     ("AGENTS.md", "   `CV_INVALID`→原样重跑。", None),
     ("AGENTS.md",
@@ -102,7 +102,7 @@ LINE_RULES = [
     # §37 LayerNorm 反向结论修正把该行改写为不含 CASE_EVIDENCE 引用，故删除该规则（否则 drift 报错）。
     # ---- README.md：删掉"已验证的 case（25 形态…三宿主…见 AGENT_TEST_MATRIX）"整段（过程性 + 悬空引用）----
     ("README.md",
-     "。三宿主（aider/gptme/codex）逐形态对照与结论见 [`skill/AGENT_TEST_MATRIX.md`](skill/AGENT_TEST_MATRIX.md)。",
+     "。逐形态对照与结论见 [`skill/AGENT_TEST_MATRIX.md`](skill/AGENT_TEST_MATRIX.md)。",
      None),
     # ---- README.md：交付仓走内网 SSH 仓，Colab（外网）访问不了 coding.jd.com，"快速开始（在 Colab）"标题改中性 ----
     ("README.md", "## 快速开始（在 Colab）", "## 快速开始"),
@@ -138,10 +138,10 @@ FORBIDDEN = [
 #   开发仓源文件保留完整、只在交付副本上删段。start 找不到 → drift 报错退出。
 BLOCK_RULES = [
     # README.md：交付仓只讲功能，删三段过程性内容（开发仓 README 保留完整复盘）。
-    # ① "验收用例与结果"整节 → 到"25 形态光谱"标题前
-    ("README.md", "## 验收用例与结果", "## 25 形态光谱"),
-    # ② "25 形态光谱"（形态表+五光谱+核心结论）→ 到"两层架构"功能说明前（目录表保留）
-    ("README.md", "## 25 形态光谱", "两层架构："),
+    # ① "验收用例与结果"整节 → 到"形态光谱"标题前
+    ("README.md", "## 验收用例与结果", "形态光谱（v1）"),
+    # ② "形态光谱"（形态表+五光谱+核心结论）→ 到"两层架构"功能说明前（目录表保留）
+    ("README.md", "形态光谱（v1）", "两层架构："),
     # ③ "开发 / 验收环境"（开发过程叙述）→ 到"快速开始"前
     ("README.md", "## 开发 / 验收环境", "## 快速开始"),
     # rbf 样例交付说明：删"验收结果（A100 实测加速比表）"整节 → 到"合规声明"前

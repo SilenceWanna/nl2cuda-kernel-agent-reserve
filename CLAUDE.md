@@ -21,6 +21,7 @@
 3. 严格按 Case 协议 7 字段写 `reference.py`（基础算子、禁 `F.*` 高层算子、**必须向量化禁 Python 沿任何张量维度的 `for` 循环（含时序/序列 for）**——描述里"单遍/在线扫描/沿时序递推"是数学语义，用广播+规约+`torch.cumsum` 表达；scan/递推类禁 `torch.tril+einsum` 的 O(T²) 密集矩阵伪向量化，要用 O(T) 前缀原语；**且禁规模/条件专属分支（`if numel>=阈值:快 else:慢`），须始终单一最干净向量化**；**例外：真变系数递推（系数输入依赖，如门控 SSM `z_t=sigmoid(w·x_t+b)`）可能无稳定 O(N) 向量化（cumprod 下溢 NaN/反向畸形、for 编译爆炸），此时 O(T²) 下三角合法诚实；自主判断先试 O(N) 崩了再退 T²。且禁用 make_inputs 挑异常分布迁就脆弱 reference**；否则 bench 对其 `torch.compile` 会卡死+弱 baseline 假象）、`config.py`（短核让规模支持 env 覆盖）、`__init__.py`（**照 `cases/rbf/__init__.py` 直接 `Case(...)` 显式传全部 7 字段，别用 inspect 反射自造构造漏必填字段**）、`kernels/*.cu`（**反向按技巧库自主推导，autograd 对拍**）、`op.py`（`candidate`）。
 4. **自测（自动，无需用户提）**：跑 `bash skill/scripts/run_on_a100.sh <name> --gpu 7 --strict`（首次加 `--sync-cli`），据 `VERDICT=`/日志按 `skill/AUTONOMOUS_LOOP.md` 决策。
 5. 未达标按 `skill/loop.md` 优化（只改 `cases/<name>/`）到 `VERDICT=PASS`；擦线（1.05–1.10×）须连跑 3 次全 PASS。
+6. **生成并验证独立编译交付版（闭环必做，非用户额外提示）**：`VERDICT=PASS` 后，照 `cases/rbf/delivery/` 结构在 `cases/<name>/delivery/` 手写四文件——`<name>_kernels.cu`（前反向 `__global__` kernel，计算逻辑与 `kernels/*.cu` 逐字一致 + `extern "C"` 裸指针 host 接口，内部管理 device 内存）、`<name>_test.cu`（CPU 参考对拍 harness，`allclose` 打印 PASS/FAIL，不依赖 torch）、`Makefile`（`make test` 一键 nvcc 独立编译+自测）、`README.md`（算法/接口/编译/合规声明）。然后 `cd cases/<name>/delivery && make test` 独立编译（仅 nvcc + CUDA runtime、无 torch）跑 CPU 对拍，**须打印 PASS**。**完工判据 = `VERDICT=PASS` 且 delivery `make test` PASS**——二者缺一不算完成，不必等用户额外提示。
 
 ## 防作弊红线（不可违反，详见 SKILL.md）
 

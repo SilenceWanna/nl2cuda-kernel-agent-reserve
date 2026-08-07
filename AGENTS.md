@@ -21,7 +21,7 @@
 > **判定：无论用户是否点了明确算子名、是否给了部分公式，只要该算子存在这类"多解变体选项"（尤其求梯度对象/边界/维度/段序这类直接改变 reference 和反向的），就必须先走确认——列出你采取的每个变体默认 + 备选，呈请确认，未确认不得建 case。** 别因"我认得这算子、它有 PyTorch 默认语义"就跳过——PyTorch 默认≠用户要的默认（实测 codex 见"相当于 grid_sample"直接把"只对 input"擅自扩成"input+grid 都求"；见 grid_sample §31）。只有当**所有变体选项都已由用户明确给定**（前向公式/shape/grad_inputs/边界对齐等全明确）时才跳过确认。
 
 **步骤 0.5（当用户只给真正的自然语言、不含数学公式/精确 shape 时）**：先**推导数学规格**呈请确认，再动工。
-产出两部分给用户：① **结构化数学规格**——前向数学公式/伪代码 + 各输入名字/形状/dtype + 输出 + `grad_inputs` + 标量参数 + **⚠️语义澄清点**（凡自然语言有多种合理解释处，显式列出你采取的解释+备选，如"‘归一化’按 LayerNorm 理解，若要 L2 请指出"）；② 按规范写的 **PyTorch reference.py 代码**。**然后停下等用户确认或修正——用户未确认数学前，不得建 `cases/<name>/`、不得写 kernel**。这是唯一的人类确认闸门（只在数学层一次）；确认后按下面 1→5 **全自动跑完**不再中途停，确认过的数学规格即 `description.md`。
+产出两部分给用户：① **结构化数学规格**——前向数学公式/伪代码 + 各输入名字/形状/dtype + 输出 + `grad_inputs` + 标量参数 + **⚠️语义澄清点**（凡自然语言有多种合理解释处，显式列出你采取的解释+备选，如"‘归一化’按 LayerNorm 理解，若要 L2 请指出"）；② 按规范写的 **PyTorch reference.py 代码**。**然后停下等用户确认或修正——用户未确认数学前，不得建 `cases/<name>/`、不得写 kernel**。这是唯一的人类确认闸门（只在数学层一次）；确认后按下面 1→6 **全自动跑完**不再中途停，确认过的数学规格即 `description.md`。
 （若用户已给明确前向公式+shape/dtype **且无多解变体待定**，数学已定，**跳过步骤 0.5**直接下面第 1 步。）
 
 1. **先读 `skill/SKILL.md`**（方法论主体，尤其"Case 协议""CUDA Kernel 实现技巧""防作弊红线""达标判据"）
@@ -46,12 +46,20 @@
      但建了 bench.env 能省一次探测、更明确。config 支持 env 是前提，别把规模写死。
 4. **自测（自动，无需用户提）**：跑 `bash skill/scripts/run_on_a100.sh <name> --gpu 7 --strict`
    （首次加 `--sync-cli`）。它在远程 GPU 跑 verify+bench，末行给 `VERDICT=`。按 `skill/AUTONOMOUS_LOOP.md` 的
-   VERDICT 决策：`PASS`→交付；`VERIFY_FAIL`→修正确性（不看 bench）；`BENCH_FAIL`→按 `skill/loop.md` 优化未达标侧 kernel；
+   VERDICT 决策：`PASS`→进步骤 6 生成交付版；`VERIFY_FAIL`→修正确性（不看 bench）；`BENCH_FAIL`→按 `skill/loop.md` 优化未达标侧 kernel；
    `CV_INVALID`→原样重跑。
    > **警惕短核假象**：若 bench 显示 baseline 前向/反向 <0.15ms 却给出高加速比（如 1.2×+），**别信、别停**——
    > 那是固定开销虚高。回去建/改 bench.env 放大规模重测，看真实加速比再判达标。
 5. **优化到达标**：未达标则迭代（只改 `cases/<name>/`），直到 `VERDICT=PASS`。
    **擦线（1.05–1.10×）须连跑 3 次全 PASS 才算达标**（见 SKILL.md 达标判据）。
+6. **生成并验证独立编译交付版（闭环必做，非用户额外提示）**：`VERDICT=PASS` 后，照 `cases/rbf/delivery/`
+   结构在 `cases/<name>/delivery/` 手写四文件——`<name>_kernels.cu`（前反向 `__global__` kernel，计算逻辑
+   与 `kernels/*.cu` 逐字一致 + `extern "C"` 裸指针 host 接口，内部管理 device 内存/拷贝/launch/同步）、
+   `<name>_test.cu`（CPU 参考对拍 harness，`allclose` 打印 PASS/FAIL，不依赖 torch）、`Makefile`
+   （`make test` 一键 nvcc 独立编译 + 跑自测；`make ARCH=sm_75 test` 换架构）、`README.md`（算法/接口/编译/合规声明）。
+   然后 `cd cases/<name>/delivery && make test` 独立编译（仅 nvcc + CUDA runtime、**无 torch**）跑 CPU 对拍，**须打印 PASS**。
+   > **完工判据 = `VERDICT=PASS` 且 delivery `make test` PASS**——二者缺一不算完成。这一步不必等用户提，达标即自动做。
+   > 厂商库墙/带宽墙等"诚实报边界"的形态：仍生成 delivery（交付手写尽力版 + README 注明边界），make test 正确性须 PASS。
 
 ## 防作弊红线（不可违反，详见 SKILL.md）
 
@@ -70,4 +78,4 @@
 ## 一句话总结
 
 **用户给算法定义 → 你读 SKILL.md → 自建 case → 写 reference/kernel/op（自主推导反向）→ run_on_a100.sh 自测 →
-按 VERDICT 迭代到稳定 PASS → 守全部防作弊红线。全程不必等用户逐步指令。**
+按 VERDICT 迭代到稳定 PASS → 生成并 `make test` 验证独立编译交付版（delivery/）→ 守全部防作弊红线。全程不必等用户逐步指令。**
