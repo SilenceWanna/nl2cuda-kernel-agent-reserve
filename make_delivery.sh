@@ -233,7 +233,7 @@ if [ "$DO_PUSH" = "1" ]; then
     git add -A
     # commit 作者用推送者本人的 git 全局身份（user.name/user.email）；须先 git config 配好，否则 commit 报错。
     git -c commit.gpgsign=false \
-        commit -q -m "feat：将生成可交付cuda纳入闭环"
+        commit -q -m "feat:方法论缺口修复"
     git remote add origin "$PUSH_REPO"
     git push -f -u origin main
   ) || { echo "[make_delivery] ✗ 推送失败" >&2; exit 1; }

@@ -52,14 +52,14 @@
    > 那是固定开销虚高。回去建/改 bench.env 放大规模重测，看真实加速比再判达标。
 5. **优化到达标**：未达标则迭代（只改 `cases/<name>/`），直到 `VERDICT=PASS`。
    **擦线（1.05–1.10×）须连跑 3 次全 PASS 才算达标**（见 SKILL.md 达标判据）。
-6. **生成并验证独立编译交付版（闭环必做，非用户额外提示）**：`VERDICT=PASS` 后，照 `cases/rbf/delivery/`
+6. **生成并验证独立编译交付版（闭环必做，非用户额外提示）**：**达标（`VERDICT=PASS`）或诚实认定本征边界后**，照 `cases/rbf/delivery/`
    结构在 `cases/<name>/delivery/` 手写四文件——`<name>_kernels.cu`（前反向 `__global__` kernel，计算逻辑
    与 `kernels/*.cu` 逐字一致 + `extern "C"` 裸指针 host 接口，内部管理 device 内存/拷贝/launch/同步）、
    `<name>_test.cu`（CPU 参考对拍 harness，`allclose` 打印 PASS/FAIL，不依赖 torch）、`Makefile`
    （`make test` 一键 nvcc 独立编译 + 跑自测；`make ARCH=sm_75 test` 换架构）、`README.md`（算法/接口/编译/合规声明）。
    然后 `cd cases/<name>/delivery && make test` 独立编译（仅 nvcc + CUDA runtime、**无 torch**）跑 CPU 对拍，**须打印 PASS**。
-   > **完工判据 = `VERDICT=PASS` 且 delivery `make test` PASS**——二者缺一不算完成。这一步不必等用户提，达标即自动做。
-   > 厂商库墙/带宽墙等"诚实报边界"的形态：仍生成 delivery（交付手写尽力版 + README 注明边界），make test 正确性须 PASS。
+   > **完工判据 = 正确性全 PASS 且 delivery `make test` PASS 且（性能达标 或 已诚实报本征边界）**。这一步不必等用户提，自动做。
+   > 本征边界=前向带宽墙/厂商库墙（正确性全 PASS、反向达标或已尽力、前向多规模复测坐实打不过）：**仍生成 delivery**（手写尽力版 + README 加"性能边界说明"、不宣称超 torch.compile），make test 正确性须 PASS。
 
 ## 防作弊红线（不可违反，详见 SKILL.md）
 
