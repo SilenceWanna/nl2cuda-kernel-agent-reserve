@@ -1105,3 +1105,24 @@ gptme 走**路径 A 半自动**（WSL 产码不自测 → base64 打包 → Cola
 **产出与复验（codex 路径 A 端到端，我独立 A100 复验、非信自报）**：codex 在路径 A（Colab）端到端产码，我把产物在 A100 独立复测——`REF_CHECK=CLEAN`（reference 纯向量化 gather/scatter+广播，`make_inputs` 自然 randn/rand 分布未挑病态），**@G=65536 计算主导区：前 4.15×/反 10.90× VERDICT=PASS**（5 种子前反向全 PASS；首测 baseline 前向 CV 7.5% 超阈判 CV_INVALID，换卡复测 CV<5% 坐实——"卡忙计时失真、重测"教训）。kernel 用真 warp 原语（`__shfl_down_sync` warp 规约 + `__shfl_sync` 跨 lane 取值），反向 10.9× 极强源于 warp 内规约省掉 baseline 处理稀疏 gather+scatter+双梯度的大量中间物化。
 
 **归类稳赢区**：反向靠 warp `__shfl` 规约省中间物化（元判据①访存更少）。**注意规模可比性教训**：aider 曾在**默认 G=4096**（未建 bench.env）跑出前 15.9×——candidate 仅 0.06ms 逼近短核区、baseline ~1ms，加速比被小规模摊薄虚高；换 G=65536 计算主导区才是可比真值。**故本形态 bench.env 钉死 WSC_GROUPS=65536**，收录 codex 版。**三宿主**：本形态按"减轮数"策略只做 codex 一宿主端到端 + 独立复验达标，aider/gptme 未逐宿主实测。
+
+## 44. 跨宿主端到端对照（2026-08-11，全部我独立 A100 多规模复验、非信自报）——"本征边界 vs 实现力不足"实测钉死
+
+连续在**交付仓**（净化版：无 DESIGN、方法论带"本征边界也生成 delivery"修复）上跑三次宿主端到端，均纯 NL 输入、路径 C（本机无 GPU、agent 经 `ssh gpubox` 双跳自测）。这些**不收编新形态**（rope/l2norm_scale 主仓已有 codex 版），是**宿主能力对照 + 方法论缺口复验**。测试副本保留于 `d2d_test/{aider/2, gptme/1, codex/6}`。
+
+**① rope（旋转位置编码）——两强宿主一致坐实"前向带宽墙=真本征边界"**：
+
+| 宿主 | 前向@ROPE_B=2048 | 反向 | 结论 |
+|------|-----------------|------|------|
+| **aider** | 0.97× | **3.06×** | 前墙 / 反赢 |
+| **codex** | 1.02× | **2.59×** | 前墙 / 反赢 |
+
+前向随规模放大持续下滑（aider 1.05→1.02→0.97），**aider/codex 两个强宿主一致卡 ~1.0** → rope 前向是**真本征边界**（纯逐元素、访存量=baseline、torch.compile 已近带宽墙），非某宿主没写好。反向两家都真赢（重算 sin/cos+转置旋转，算术强度够）。aider 端到端还**正确识别本征边界**（诚实报"前向带宽墙、反向真赢、不宣称前向超 torch.compile"）——skill"识别本征边界不空转"生效。
+
+**② l2norm_scale（gptme 端到端）——反向该赢没赢 = 实现力不足，非边界**：gptme 续跑补全 case（kernel/op/delivery 齐全、check_reference CLEAN、正确性 5 种子 PASS、delivery make test PASS），但独立多规模复验 @L2_B=524288 计算主导区**前 0.94×/反 1.00× 均未达标**。对比：主仓 **codex 版 l2norm_scale 反向 1.48×**（靠单 kernel 全融合+shared 私有累积）。**同形态反向 codex 1.48 赢 / gptme 1.00 挂 = 宿主实现力差异，非本征边界**——gptme 反向没做融合翻墙、撞了带宽墙却当边界认（结果诚实但归因不全对）。
+
+**③ 两案例互补，把核心判据用实测钉死**：**rope 前向**（aider 0.97≈codex 1.02，三宿主一致卡）= **本征边界**（认边界对）；**l2norm 反向**（codex 1.48 赢 / gptme 1.00 挂，有赢有挂）= **实现力不足**（该继续优化）。**判据坐实：一致卡同点=①本征边界；有赢有挂=②宿主实现力**——与 SKILL"识别本征边界"总纲的分野完全吻合。
+
+**④ 宿主实现力梯度（本轮实测）**：codex（l2norm 反 1.48、rope 反 2.59，最强）> aider（rope 反 3.06、能正确认边界，强）> gptme（l2norm 反 1.00 撞墙、非交互模式一度只建半个 case+空 delivery 目录就中止，偏弱）。**gptme 非交互模式对多文件 case 不稳**（需续跑补全），交互/续跑后能补齐但 kernel 优化力弱于 codex/aider。印证"三维分离归因"：同 case codex 稳过、gptme 可能因实现力栽，非 skill 缺陷。
+
+**⑤ 方法论缺口修复复验**：本轮据 rope 端到端发现"步骤6 卡死 VERDICT=PASS 致带宽墙形态永不生成 delivery"，已改为"达标或诚实认定本征边界均生成 delivery"（5 处方法论）。gptme l2norm 与 codex/aider rope 均在新逻辑下正确生成了 delivery（含性能边界说明），修复生效。
