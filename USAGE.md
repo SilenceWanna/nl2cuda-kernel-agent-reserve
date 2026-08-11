@@ -88,7 +88,8 @@ agent 会（按 `SKILL.md` 流程）：
 - **Windows PowerShell**（`base64 -w0` 在 PowerShell 不可用；tar 是 Win10/11 自带的）：
   ```powershell
   tar czf case.tgz --exclude=__pycache__ --exclude=*.pyc cases/<你的算法名>
-  [Convert]::ToBase64String([IO.File]::ReadAllBytes("case.tgz")) | Set-Content -NoNewline case_b64.txt
+  [Convert]::ToBase64String([IO.File]::ReadAllBytes("$PWD\case.tgz")) | Set-Content -NoNewline case_b64.txt
+  # 用 $PWD 绝对路径：.NET 的当前目录不跟随 PowerShell 的 cd,裸写 "case.tgz" 会报 FileNotFound
   # 打开 case_b64.txt 复制那一整行（别用 certutil -encode——它带页眉/多行，需手工清理易错）
   ```
 
