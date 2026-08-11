@@ -22,12 +22,14 @@
 
 ## 步骤 0（两条路径共用）：获取交付物
 
-本项目是 public 仓库，直接 clone（无需认证）：
+在**能访问本仓库的环境**（如公司内网机）直接 clone：
 
 ```bash
 git clone https://github.com/SilenceWanna/nl2cuda-kernel-agent.git
 cd nl2cuda-kernel-agent
 ```
+
+> **⚠️ Colab 等外网环境连不到内网仓库**——路径 A 不在 Colab 里 clone，而是把本地 clone 出的交付物**打包上传**到 Colab（见 A-2.5 / A-3）。本地产码那台机器（能连仓库）正常 clone 即可。
 
 **交付物核心文件**（clone 后即全部就绪）：
 
@@ -49,7 +51,7 @@ cd nl2cuda-kernel-agent
 **Colab 的头号约束：运行时会超时/断连重置**（闲置约 90 分钟或断网），一旦重置，clone 的仓库、上传的 case、已编译的 kernel 全丢。而你本地跑的 AI agent 进程**碰不到 Colab 云端 GPU**。所以路径 A 用**两阶段**，把"易受超时影响的验证"压缩成 Colab 里的**一个 cell 一次性跑完**：
 
 - **阶段一（本地，慢慢来、不碰 Colab）**：agent 在你本地把 case 写好（不受超时影响）。
-- **阶段二（Colab，一个 cell 跑完）**：把 case 打包搬进 Colab，用一个 cell 从 clone 到 bench 一口气跑完。
+- **阶段二（Colab，跑两个 cell）**：把 skill 包 + case 上传进 Colab，Cell 1 冒烟、Cell 2 解包 case 跑 verify/bench。
 
 ## A-1　阶段一：让 agent 在本地产出 case
 
@@ -90,37 +92,61 @@ agent 会（按 `SKILL.md` 流程）：
   # 打开 case_b64.txt 复制那一整行（别用 certutil -encode——它带页眉/多行，需手工清理易错）
   ```
 
-## A-3　阶段二：Colab 用现成 notebook，填两个空跑完
+## A-2.5　打包 skill 包（供 Colab 上传，只需做一次）
 
-交付物自带 `notebooks/run.ipynb`——**已写好两个 cell 的骨架，你只需在现成基础上填空**，不用从零敲。
+Colab 连不到内网仓库，所以 skill 本身也要打包上传。在**步骤 0 clone 出来的交付物根目录**（含 `framework/`、`skill/`、`cases/` 那层）打一个 `skill_delivery.tgz`：
 
-1. 打开 [Colab](https://colab.research.google.com/)，`代码执行程序 → 更改运行时类型 → T4 GPU`，`文件 → 上传笔记本` 传入仓库里的 `notebooks/run.ipynb`。
-2. **跑 Cell 1（冒烟）**：原样运行——clone 仓库 + 装 ninja + 跑内置 rbf。rbf 的 verify 全 PASS 即环境就绪（首次 nvcc 编译要等几分钟，无输出正常）。
-3. **跑 Cell 2（你的 case）**：在现成 cell 里填两个空——
+```bash
+# 在交付物根目录（Linux / macOS / WSL / Git Bash；Windows 用 System32 自带 tar）
+tar czf /tmp/skill_delivery.tgz --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' -C . .
+```
+```powershell
+# Windows PowerShell（tar 是 Win10/11 自带）
+tar czf $env:TEMP\skill_delivery.tgz --exclude=.git --exclude=__pycache__ --exclude=*.pyc -C . .
+```
+
+得到的 `skill_delivery.tgz`（几十 KB）就是完整 skill 包（framework + skill + rbf 样例）。**它不进仓库**（那样会套娃），是现打现传的分发媒介。A-3 里 Colab 会让你上传它。改了 skill 才需重打；只跑不同 case 不用重打。
+
+## A-3　阶段二：Colab 用现成 notebook，跑两个 cell
+
+交付物自带 `notebooks/run.ipynb`——**已写好两个 cell，取 skill 靠上传 `skill_delivery.tgz`（不 clone，Colab 连不到内网）**。
+
+1. 打开 [Colab](https://colab.research.google.com/)，`代码执行程序 → 更改运行时类型 → T4 GPU`，`文件 → 上传笔记本` 传入 `notebooks/run.ipynb`。
+2. **跑 Cell 1（冒烟）**：首次运行会**弹窗让你上传 `skill_delivery.tgz`**（A-2.5 打的那个），选它 → 自动解包 + 装 ninja + 跑内置 rbf。rbf 的 verify 全 PASS 即环境就绪（首次 nvcc 编译要等几分钟）。
+   > T4 上 rbf 前向可能不达标（bench FAIL）——**正常**：rbf 前向优势要 A100（sm_80）才显现，T4 上验的是**正确性 + 链路通**，性能达标看 A100。
+3. **跑 Cell 2（你的 case）**：skill 包已在（Cell 1 传过），填两个空——
    - `CASE = '你的算法名'`（改成实际名如 `rmsnorm`，**不要留尖括号**）
    - `B64  = '...'`（粘上 A-2 那一整行 base64，结尾通常是 `==`）
    
-   运行即解包 case + verify + bench 一次性跑完。Cell 2 是自包含的（自带 clone/装依赖的幂等判断），**即使 Colab 中途重置，单跑 Cell 2 也能自我恢复**。
+   运行即解包 case + verify + bench。Cell 2 会先清旧 case 目录 + 编译缓存（改了 kernel 重跑不会用到旧版）。
 
-> **为什么这样设计**：Colab 闲置约 90 分钟/断网会重置运行时（仓库、case、编译产物全丢）。两个 cell 各自把"环境+任务"绑成一次性执行，重置后重跑该 cell 即可，不会卡在"分步做到一半被打断"。
+> **Colab 会话重置后**（闲置约 90 分钟/断网，仓库、case、缓存全丢）：重跑 Cell 1，它检测到没 skill 包会再次弹窗上传——重传 `skill_delivery.tgz` 即可恢复，不会连锁报错。
 
-若手头没有 notebook（或想手敲），Cell 2 等价的自包含代码就是：
+若想手敲等价代码（Cell 2 自包含版）：
 ```python
-import os, base64, tarfile, io
-os.chdir("/content")
-if not os.path.isdir("/content/nl2cuda-kernel-agent-skill"):
-    !git clone https://github.com/SilenceWanna/nl2cuda-kernel-agent-skill.git
-os.chdir("/content/nl2cuda-kernel-agent-skill")
+import os, base64, tarfile, io, shutil
+os.chdir('/content')
+REPO = '/content/nl2cuda-kernel-skill'; PKG = '/content/skill_delivery.tgz'
+if not os.path.isdir(REPO):
+    if not os.path.exists(PKG):
+        from google.colab import files
+        up = files.upload()                       # 弹窗选 skill_delivery.tgz
+        PKG = '/content/' + (list(up)[0])
+    os.makedirs(REPO, exist_ok=True)
+    with tarfile.open(PKG) as t: t.extractall(REPO)
+os.chdir(REPO); 
 !pip install ninja -q
 CASE = "你的算法名"                       # ← 改成实际 case 名，如 rmsnorm（不要留尖括号）
 B64  = "在此粘贴 A-2 那一整行 base64"      # ← 一整行，结尾通常是 ==
+shutil.rmtree(os.path.join(REPO,'cases',CASE), ignore_errors=True)     # 清旧 case
+shutil.rmtree('/root/.cache/torch_extensions', ignore_errors=True)     # 清编译缓存
 with tarfile.open(fileobj=io.BytesIO(base64.b64decode(B64))) as t:
     t.extractall(".")
 print("case 文件:", os.listdir(f"cases/{CASE}"))
 !python skill/scripts/verify_case.py --case {CASE}
 !python skill/scripts/bench_case.py  --case {CASE}
 ```
-`os.chdir`（Python，跨行不漂）比分散的 `%cd` 稳；`{CASE}` 是 f-string 插值，只填一处、不残留尖括号。`verify` 全 PASS 才看 `bench`。
+`{CASE}` 是 f-string 插值，只填一处、不残留尖括号。`verify` 全 PASS 才看 `bench`。
 
 3. **若 `bench` 报"短核假象警告"**（baseline <1ms，小 reduce/归一化/逐元素类常见，加速比被固定开销抬高、不可信），在同一运行时补一个 cell 放大规模复测（`<规模ENV>` 见该 case `config.py`，如 RMSNorm 是 `RMS_B`）：
    ```python
@@ -130,7 +156,7 @@ print("case 文件:", os.listdir(f"cases/{CASE}"))
 
 ## A-4　迭代与达标
 
-- 把 Colab 的 verify/bench 输出**贴回给本地 agent**，它据此改 kernel → 你重打包（A-2）→ **重跑 A-3 那一个 cell**（带 `if not isdir` 幂等，仓库在就跳过 clone、只重解包+自测）。
+- 把 Colab 的 verify/bench 输出**贴回给本地 agent**，它据此改 kernel → 你重打包（A-2）→ **重跑 A-3 的 Cell 2**（skill 包已在则跳过上传，只重解包 case + 自测；Cell 2 会先清旧 case 目录 + 编译缓存，确保用的是新 kernel）。
 - **达标线**：前向、反向各自 ≥1.05× `torch.compile`；擦线（1.05–1.10×）建议连跑 3 次都过。
 - **本征边界**：有些算法（纯访存前向如池化/逐元素、cuSOLVER/cuFFT 级厂商库前向）手写打不过是正常的——`SKILL.md` 的"识别本征边界"章节讲了何时该停、诚实报边界，别空转。
 
