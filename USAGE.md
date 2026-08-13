@@ -58,8 +58,8 @@ cd nl2cuda-kernel-agent
 在本地（装好任意 AI 编码 agent，如 Claude Code / Codex / aider）打开 clone 下来的仓库，**直接用自然语言描述你的算法**——多数 agent 会自动读仓库里的约定文件（`AGENTS.md`/`CLAUDE.md`/`CONVENTIONS.md`），无需长提示词：
 
 ```
-把每行向量归一化到均值0方差1再乘可学习的 gamma 加 beta，输入是 [批, 特征] 的 fp32
-张量，对输入和 gamma/beta 都要能求梯度。
+计算两组向量之间的成对余弦相似度：输入 X:[N, D] 和 Y:[M, D] 都是 fp32，先各自按行
+做 L2 归一化，再算每一对 (x_i, y_j) 的点积，得到相似度矩阵 S:[N, M]。对 X 和 Y 都要能求梯度。
 ```
 
 agent 会（按 `SKILL.md` 流程）：
@@ -246,7 +246,7 @@ rbf `verify` 全 PASS 即环境就绪，进步骤 2。
 ```
 我的 GPU 环境：<本机有卡，直接跑 / 远程 SSH，用 "ssh gpubox" 一步可登、代码 rsync 到 ~/nl2cuda>。
 <然后用自然语言描述你的算法>
-例如："把每行向量归一化到均值0方差1再乘 gamma 加 beta，输入 [批,特征] fp32，对输入和 gamma/beta 求梯度。"
+例如："计算成对余弦相似度：X:[N,D] 和 Y:[M,D] fp32，各自按行 L2 归一化后算每对 (x_i,y_j) 点积得 S:[N,M]，对 X 和 Y 求梯度。"
 ```
 agent 会先推导数学规格呈你确认（唯一人类确认点），再自建 `cases/<name>/`、自主推导反向。
 > **兜底**（agent 没自动读约定文件时）：把 A-1 那段兜底提示给它，但删掉"我本地无 GPU 只写代码不跑测试"——B/C 下 agent 应自己跑自测。
