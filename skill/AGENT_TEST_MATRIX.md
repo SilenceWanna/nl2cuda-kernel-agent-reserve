@@ -1126,3 +1126,20 @@ gptme 走**路径 A 半自动**（WSL 产码不自测 → base64 打包 → Cola
 **④ 宿主实现力梯度（本轮实测）**：codex（l2norm 反 1.48、rope 反 2.59，最强）> aider（rope 反 3.06、能正确认边界，强）> gptme（l2norm 反 1.00 撞墙、非交互模式一度只建半个 case+空 delivery 目录就中止，偏弱）。**gptme 非交互模式对多文件 case 不稳**（需续跑补全），交互/续跑后能补齐但 kernel 优化力弱于 codex/aider。印证"三维分离归因"：同 case codex 稳过、gptme 可能因实现力栽，非 skill 缺陷。
 
 **⑤ 方法论缺口修复复验**：本轮据 rope 端到端发现"步骤6 卡死 VERDICT=PASS 致带宽墙形态永不生成 delivery"，已改为"达标或诚实认定本征边界均生成 delivery"（5 处方法论）。gptme l2norm 与 codex/aider rope 均在新逻辑下正确生成了 delivery（含性能边界说明），修复生效。
+
+## 45. USAGE 示例算法换 conv1d + 双宿主复验（2026-08-14，全部我独立 A100 双规模复验、非信自报）
+
+**背景**：USAGE 示例算法从 cosine_sim 换成"简单稳过"的 depthwise causal conv1d（换例动因见 memory [[usage-example-choice]]）。此前 **pairwise_d2（成对平方距离）被否**——aider 实测前 0.085×/反 0.007×：其自然 reference 是 GEMM 恒等式 `||x||²+||y||²-2XYᵀ`，torch.compile 走 cuBLAS SGEMM，手写朴素循环打不过（撞矩阵乘墙），反向 atomicAdd 每行 M 路竞争 89ms 灾难。**conv1d 无此陷阱**：reference 是 unfold 移位加权和（无 GEMM），torch.compile 走逐元素融合。
+
+**conv1d 双宿主对照（B/C/T 平衡规模 + 2× 放大双复测坐实计算主导区）**：
+
+| 宿主 | 前向 | 反向 | 正确性 | 迭代 |
+|------|------|------|--------|------|
+| **aider** | 1.80× | 1.98× | 5 种子 PASS | reference 首版 `gather` input/index 维数不匹配 crash（VERIFY_FAIL），据反馈（只给报错+根因、不给修法）**自主改用 unfold 修对** |
+| **gptme** | 2.12× | 4.25× | 5 种子 PASS | 一次产码即对；跑偏建 pairwise_sqdist 一轮后纠偏重做 |
+
+两宿主均：放大到计算主导区（baseline 前 3.35ms/反 13–15ms）加速比几乎不动（真优势非短核虚高），无 GEMM 墙/无弱 baseline/无红线违规。**gptme 反向 4.25× ≫ aider 1.98×**——gptme dW 用 `__shfl_down_sync` warp 规约 + 沿 B×T 分块（split），aider 用 block 共享内存规约，前者更省。conv1d 是**双宿主背书的稳过案例**，选它替 pairwise_d2 正确。
+
+**连带修的 skill 真 bug**：① `run_on_a100.sh` auto-scale 正则 `os.environ.get("[A-Za-z_]+")` 漏匹配含数字变量名（CONV1D_B/D2_N 都漏）→ 误判"config 未参数化"不放大→短核虚高，改 `[A-Za-z_][A-Za-z0-9_]*`；② `check_reference.py` 把合法基础算子 `torch.nn.functional.pad` 误报成 `[RED] 高层算子`（原 `nn.functional.` 一刀切），改为只匹配高层算子名（F./nn.functional. 两前缀对齐 + 扩名单）；③ 补 `scan_op` fast-math/TF32 守卫。三宿主环境坑记入 memory [[reference_aider_windows_gotchas]]（BOM/key占位符/litellm空响应/read-only崩溃）、[[reference_gptme_wsl_gotchas]]（PATH缺失/401变量名/跑偏串味/工具卡住）。
+
+**codex 未测**：conv1d 是既有形态换示例（非新形态收编），双宿主已足够坐实稳过性；codex 侧可选补。
