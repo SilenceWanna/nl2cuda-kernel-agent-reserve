@@ -1127,19 +1127,20 @@ gptme 走**路径 A 半自动**（WSL 产码不自测 → base64 打包 → Cola
 
 **⑤ 方法论缺口修复复验**：本轮据 rope 端到端发现"步骤6 卡死 VERDICT=PASS 致带宽墙形态永不生成 delivery"，已改为"达标或诚实认定本征边界均生成 delivery"（5 处方法论）。gptme l2norm 与 codex/aider rope 均在新逻辑下正确生成了 delivery（含性能边界说明），修复生效。
 
-## 45. USAGE 示例算法换 conv1d + 双宿主复验（2026-08-14，全部我独立 A100 双规模复验、非信自报）
+## 45. USAGE 示例算法换 conv1d + 三宿主复验（2026-08-14，全部我独立 A100 复验、非信自报）
 
 **背景**：USAGE 示例算法从 cosine_sim 换成"简单稳过"的 depthwise causal conv1d（换例动因见 memory [[usage-example-choice]]）。此前 **pairwise_d2（成对平方距离）被否**——aider 实测前 0.085×/反 0.007×：其自然 reference 是 GEMM 恒等式 `||x||²+||y||²-2XYᵀ`，torch.compile 走 cuBLAS SGEMM，手写朴素循环打不过（撞矩阵乘墙），反向 atomicAdd 每行 M 路竞争 89ms 灾难。**conv1d 无此陷阱**：reference 是 unfold 移位加权和（无 GEMM），torch.compile 走逐元素融合。
 
-**conv1d 双宿主对照（B/C/T 平衡规模 + 2× 放大双复测坐实计算主导区）**：
+**conv1d 三宿主对照（均 A100 计算主导区实测，aider/gptme 另做 2× 放大双复测坐实非短核）**：
 
-| 宿主 | 前向 | 反向 | 正确性 | 迭代 |
-|------|------|------|--------|------|
-| **aider** | 1.80× | 1.98× | 5 种子 PASS | reference 首版 `gather` input/index 维数不匹配 crash（VERIFY_FAIL），据反馈（只给报错+根因、不给修法）**自主改用 unfold 修对** |
-| **gptme** | 2.12× | 4.25× | 5 种子 PASS | 一次产码即对；跑偏建 pairwise_sqdist 一轮后纠偏重做 |
+| 宿主 | 前向 | 反向 | 正确性 | K | 迭代 |
+|------|------|------|--------|---|------|
+| **aider** | 1.80× | 1.98× | 5 种子 PASS | 4 | reference 首版 `gather` input/index 维数不匹配 crash（VERIFY_FAIL），据反馈（只给报错+根因、不给修法）**自主改用 unfold 修对** |
+| **gptme** | 2.12× | 4.25× | 5 种子 PASS | 4 | 一次产码即对；跑偏建 pairwise_sqdist 一轮后纠偏重做 |
+| **codex** | 2.01× | **5.42×** | 5 种子 PASS | 7 | **一次过**、baseline 前向 1.04ms 直接进计算主导区无短核警告；**唯一自带 bench.env + 完整 delivery** |
 
-两宿主均：放大到计算主导区（baseline 前 3.35ms/反 13–15ms）加速比几乎不动（真优势非短核虚高），无 GEMM 墙/无弱 baseline/无红线违规。**gptme 反向 4.25× ≫ aider 1.98×**——gptme dW 用 `__shfl_down_sync` warp 规约 + 沿 B×T 分块（split），aider 用 block 共享内存规约，前者更省。conv1d 是**双宿主背书的稳过案例**，选它替 pairwise_d2 正确。
+三宿主均：reference 用 unfold 移位加权和（无 GEMM）、无弱 baseline、无红线违规，加速比计算主导区稳定。**反向普遍 ≫ 前向**（转置卷积 + dW 规约手写比 torch.compile 省得多）。宿主强弱梯度再现：**codex 最强**（一次过、自带 bench.env+delivery、反向 5.42× 最高）> gptme（warp shuffle 反向 4.25×，跑偏一轮）> aider（reference 一轮 bug 后自主修，1.98×）。
+
+**自然语言版确认闸门生效的实证**：USAGE 示例改自然语言后（不写 K/shape/公式，见 commit 051499f），三宿主经确认闸门各自推导——**codex 自选 K=7、aider/gptme 落 K=4**，都是合法 depthwise-causal 变体。证明自然语言描述既触发数学规格确认闸门、又不歧义到别的算子（"逐通道""因果/只看当前和过去"两个语义锚定向到位）。
 
 **连带修的 skill 真 bug**：① `run_on_a100.sh` auto-scale 正则 `os.environ.get("[A-Za-z_]+")` 漏匹配含数字变量名（CONV1D_B/D2_N 都漏）→ 误判"config 未参数化"不放大→短核虚高，改 `[A-Za-z_][A-Za-z0-9_]*`；② `check_reference.py` 把合法基础算子 `torch.nn.functional.pad` 误报成 `[RED] 高层算子`（原 `nn.functional.` 一刀切），改为只匹配高层算子名（F./nn.functional. 两前缀对齐 + 扩名单）；③ 补 `scan_op` fast-math/TF32 守卫。三宿主环境坑记入 memory [[reference_aider_windows_gotchas]]（BOM/key占位符/litellm空响应/read-only崩溃）、[[reference_gptme_wsl_gotchas]]（PATH缺失/401变量名/跑偏串味/工具卡住）。
-
-**codex 未测**：conv1d 是既有形态换示例（非新形态收编），双宿主已足够坐实稳过性；codex 侧可选补。
