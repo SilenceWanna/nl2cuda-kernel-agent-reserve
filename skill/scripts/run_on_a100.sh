@@ -121,11 +121,12 @@ AUTO_START=8192      # 放大起点规模
 AUTO_MAX=4194304     # 规模上限（防显存爆炸/失控，4M）
 AUTO_TARGET_MS=1.0   # 目标：baseline 前反向均 ≥此耗时(ms) 才算进入计算主导区（CV 稳、摊薄固定开销）；未达则放大
 if [ "$AUTO_SCALE" = "1" ] && [ -z "$SIZE_ENV" ]; then
-  # 取 config.py 第一个 os.environ.get("XXX", ...) 的变量名（如 RMS_B / SCAN_B / LN_B）
-  SCALE_VAR="$(grep -oE 'os\.environ\.get\("[A-Za-z_]+"' "$WORKDIR/cases/$CASE/config.py" 2>/dev/null \
-               | head -1 | sed -E 's/.*"([A-Za-z_]+)".*/\1/')"
+  # 取 config.py 第一个 os.environ.get("XXX", ...) 的变量名（如 RMS_B / SCAN_B / LN_B / CONV1D_B）
+  # 变量名按 Python 标识符：首字符字母/下划线，其后可含数字（否则 CONV1D_B / D2_N 这类含数字名会漏匹配→误判"未参数化"不放大）
+  SCALE_VAR="$(grep -oE 'os\.environ\.get\("[A-Za-z_][A-Za-z0-9_]*"' "$WORKDIR/cases/$CASE/config.py" 2>/dev/null \
+               | head -1 | sed -E 's/.*"([A-Za-z_][A-Za-z0-9_]*)".*/\1/')"
   # 数一共有几个规模 env 变量：≥3 个 = 多维 config（N×C×H×W…），auto-scale 只放大第一个会病态。
-  SCALE_VAR_COUNT="$(grep -oE 'os\.environ\.get\("[A-Za-z_]+"' "$WORKDIR/cases/$CASE/config.py" 2>/dev/null | wc -l | tr -d ' ')"
+  SCALE_VAR_COUNT="$(grep -oE 'os\.environ\.get\("[A-Za-z_][A-Za-z0-9_]*"' "$WORKDIR/cases/$CASE/config.py" 2>/dev/null | wc -l | tr -d ' ')"
   if [ -z "$SCALE_VAR" ]; then
     echo "[run_on_a100] 提示：无 size-env/bench.env 且 config 未参数化规模，无法自动放大——结果可能是短核虚高。" >&2
   elif [ "${SCALE_VAR_COUNT:-1}" -ge 3 ] 2>/dev/null; then
