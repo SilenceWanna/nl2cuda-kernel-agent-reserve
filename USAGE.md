@@ -100,14 +100,20 @@ Colab 连不到内网仓库，所以 skill 本身也要打包上传。在**步�
 
 ```bash
 # 在交付物根目录（Linux / macOS / WSL / Git Bash；Windows 用 System32 自带 tar）
-tar czf /tmp/skill_delivery.tgz --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' -C . .
+# 打到当前目录，打完就地列出确认
+tar czf skill_delivery.tgz --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' -C . .
+ls -la skill_delivery.tgz          # 确认生成，记住这个路径
 ```
 ```powershell
-# Windows PowerShell（tar 是 Win10/11 自带）
-tar czf $env:TEMP\skill_delivery.tgz --exclude=.git --exclude=__pycache__ --exclude=*.pyc -C . .
+# Windows PowerShell（tar 是 Win10/11 自带）；打到当前目录，打完就地列出确认
+tar czf skill_delivery.tgz --exclude=.git --exclude=__pycache__ --exclude=*.pyc -C . .
+Get-Item skill_delivery.tgz | Select-Object FullName, Length   # 确认生成，FullName 就是上传时要选的完整路径
 ```
 
-得到的 `skill_delivery.tgz`（几十 KB）就是完整 skill 包（framework + skill + rbf 样例）。**它不进仓库**（那样会套娃），是现打现传的分发媒介。A-3 里 Colab 会让你上传它。改了 skill 才需重打；只跑不同 case 不用重打。
+> **⚠️ 文件在哪？** 上面命令把 `skill_delivery.tgz` 打在**你当前所在的交付物根目录**下（就是你敲命令的那个目录）。A-3 里 Colab 弹窗上传时，浏览到这个目录选它即可；PowerShell 用户可直接复制上一条 `Get-Item` 打印的 `FullName` 完整路径。
+> （若你把输出路径写成了 `$env:TEMP\...` 或 `/tmp/...`，文件就在系统临时目录，不在当前目录——`ls` 找不到很正常，去那个临时目录找，或按上面改成打到当前目录重打一次。）
+
+得到的 `skill_delivery.tgz`（几十 KB）就是完整 skill 包（framework + skill + rbf 样例）。**它不进仓库**（那样会套娃，`.gitignore` 已忽略），是现打现传的分发媒介。A-3 里 Colab 会让你上传它。改了 skill 才需重打；只跑不同 case 不用重打。
 
 ## A-3　阶段二：Colab 用现成 notebook，跑两个 cell
 
