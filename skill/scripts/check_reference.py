@@ -58,9 +58,8 @@ def scan_reference(src):
     # 1. 红线§1：高层融合算子落回
     for pat, name in [
         (r"scaled_dot_product_attention", "F.scaled_dot_product_attention"),
-        (r"F\.(softmax|layer_norm|group_norm|batch_norm|conv1d|conv2d|conv3d|linear|multi_head|cross_entropy|scaled|embedding)", "F.* 高层算子"),
-        (r"F\.(max_pool|avg_pool|adaptive_max_pool|adaptive_avg_pool|lp_pool)", "F.*_pool 池化层算子"),
-        (r"nn\.functional\.", "nn.functional.*"),
+        (r"(F|nn\.functional)\.(softmax|log_softmax|layer_norm|group_norm|batch_norm|instance_norm|conv1d|conv2d|conv3d|conv_transpose\d?d?|linear|bilinear|multi_head|cross_entropy|nll_loss|scaled_dot_product_attention|embedding|gelu|silu|glu|elu|selu|gumbel_softmax)", "F.* 高层算子"),
+        (r"(F|nn\.functional)\.(max_pool\d?d?|avg_pool\d?d?|adaptive_max_pool\d?d?|adaptive_avg_pool\d?d?|lp_pool\d?d?)", "F.*_pool 池化层算子"),
         (r"nn\.(MultiheadAttention|Conv1d|Conv2d|Conv3d|Linear|LayerNorm|GroupNorm|BatchNorm|MaxPool|AvgPool|Embedding)", "nn.* 高层模块"),
     ]:
         if re.search(pat, code):
@@ -224,6 +223,32 @@ def scan_make_inputs(src):
     return findings
 
 
+def scan_op(root, case):
+    """扫 cases/<case>/op.py 的编译参数红线：fast-math 等降精度 flag（防作弊红线§3 "不降精度换速度"）。
+    实测 gptme rope 在 op.py 的 extra_cuda_cflags 写了 `--use_fast_math=0`——既违红线（不该出现该 flag）
+    又语法错（nvcc `--use_fast_math` 不接参数，`=0` 直接编译 fatal）。check_reference 原只扫 reference/kernel，
+    漏了 op.py 的编译 flag，故补此项。返回 [(severity, code, msg)]。"""
+    findings = []
+    op_path = os.path.join(root, "cases", case, "op.py")
+    if not os.path.exists(op_path):
+        return findings
+    # 注意：编译 flag 写在字符串字面量里（extra_cuda_cflags=["--use_fast_math"]），
+    # 不能用 _strip_comments（它会清空字符串内容），直接扫原始源码。
+    code = _read(op_path)
+    # fast-math 家族（nvcc/gcc）：任何形式出现都违红线（fp32 全精度、不用 fast-math）
+    if re.search(r"-{1,2}use_fast_math|-{1,2}ffast-math|--prec-div\s*=?\s*false|--prec-sqrt\s*=?\s*false|--fmad\s*=?\s*true", code):
+        findings.append(("RED", "op-fast-math",
+                         "op.py 的编译参数含 fast-math/降精度 flag（如 --use_fast_math/-ffast-math/--prec-div=false）——"
+                         "违防作弊红线§3'不降精度换速度';且 nvcc `--use_fast_math` 是开关型不接参数,写 `=0` 会编译 fatal。"
+                         "删掉该 flag（默认即不开 fast-math、保 fp32 全精度）"))
+    # 显式开 TF32 tensor-op（降精度换速度的另一形式；cuBLAS TF32 math mode）
+    if re.search(r"CUBLAS_TF32_TENSOR_OP_MATH|allow_tf32\s*=\s*True|set_float32_matmul_precision\(\s*['\"]high", code):
+        findings.append(("RED", "op-tf32",
+                         "op.py 显式启用 TF32（CUBLAS_TF32_TENSOR_OP_MATH / allow_tf32=True / matmul_precision('high')）——"
+                         "TF32 降低 fp32 精度换速度,违红线§3;fp32 case 须走全精度路径"))
+    return findings
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--case", required=True, help="case 名，如 rbf")
@@ -239,11 +264,11 @@ def main():
         return 1 if args.strict else 0
 
     src = _read(ref_path)
-    findings = scan_reference(src) + scan_make_inputs(src) + scan_kernels(root, args.case)
+    findings = scan_reference(src) + scan_make_inputs(src) + scan_kernels(root, args.case) + scan_op(root, args.case)
 
     print(f"=== reference 静态扫描: case={args.case} ===")
     if not findings:
-        print("  无可疑写法（for/T^2-Toeplitz/规模分支/cumprod-脆弱/高层算子/挑输入分布/kernel嵌套重算 均未命中）")
+        print("  无可疑写法（for/T^2-Toeplitz/规模分支/cumprod-脆弱/高层算子/挑输入分布/kernel嵌套重算/op编译红线 均未命中）")
         print("REF_CHECK=CLEAN")
         return 0
 
